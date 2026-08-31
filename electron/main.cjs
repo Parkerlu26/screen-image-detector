@@ -27,6 +27,43 @@ function saveFloatingPosition(pos) {
   } catch {}
 }
 
+// 帳號伺服器網址。打包時可以由 .env 的 VITE_API_BASE 寫進程式裡，但若同一層資料夾
+// （或使用者資料夾）放了 api-server.txt，就以檔案內容為準——換伺服器不用重新打包。
+const API_BASE_FILENAME = 'api-server.txt';
+
+function readApiBaseOverride() {
+  const candidates = [];
+  // 免安裝版執行時會先解壓到暫存資料夾，PORTABLE_EXECUTABLE_DIR 才是 exe 真正的所在位置。
+  if (process.env.PORTABLE_EXECUTABLE_DIR) {
+    candidates.push(path.join(process.env.PORTABLE_EXECUTABLE_DIR, API_BASE_FILENAME));
+  }
+  try {
+    candidates.push(path.join(path.dirname(app.getPath('exe')), API_BASE_FILENAME));
+  } catch {}
+  try {
+    candidates.push(path.join(app.getPath('userData'), API_BASE_FILENAME));
+  } catch {}
+  for (const file of candidates) {
+    try {
+      if (!fs.existsSync(file)) continue;
+      // 允許檔案裡有註解行（# 開頭）與空行，取第一個像網址的字串。
+      const line = fs
+        .readFileSync(file, 'utf8')
+        .split(/\r?\n/)
+        .map((text) => text.trim())
+        .find((text) => /^https?:\/\/.+/i.test(text));
+      if (line) return line.replace(/\/+$/, '');
+    } catch {}
+  }
+  return '';
+}
+
+/** 傳給畫面用的載入參數；有覆寫時以 ?api= 帶進 renderer。 */
+function rendererQuery() {
+  const override = readApiBaseOverride();
+  return override ? { api: override } : undefined;
+}
+
 // Persistent PowerShell worker
 let psProc = null;
 let activeHotkeys = new Map(); // hotkeyName -> { vk, timerId }
@@ -310,7 +347,10 @@ function createFloatingWindow() {
   if (isDev) {
     floatingWindow.loadURL('http://localhost:3000/#floating');
   } else {
-    floatingWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'floating' });
+    floatingWindow.loadFile(path.join(__dirname, '../dist/index.html'), {
+      hash: 'floating',
+      query: rendererQuery(),
+    });
   }
 
   floatingWindow.setAlwaysOnTop(true, 'screen-saver');
@@ -538,7 +578,7 @@ function createWindow() {
     mainWindow.loadURL('http://localhost:3000');
     mainWindow.webContents.openDevTools({ mode: 'detach' });
   } else {
-    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    mainWindow.loadFile(path.join(__dirname, '../dist/index.html'), { query: rendererQuery() });
   }
 
   mainWindow.on('closed', () => {

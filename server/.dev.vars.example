@@ -1,0 +1,9 @@
+# 本機開發用的機密，複製成 .dev.vars 後填入自己的值（.dev.vars 已被 .gitignore 排除）。
+# 正式環境不要用這個檔案，改用：
+#   wrangler secret put ADMIN_MASTER_KEY
+#   wrangler secret put BOOTSTRAP_TOKEN
+
+# 管理員登入時要額外輸入的第二道金鑰。
+ADMIN_MASTER_KEY=CHANGE-ME-LOCAL-ONLY
+# 只用來建立第一個管理員帳號，建完就把這一行刪掉。
+BOOTSTRAP_TOKEN=CHANGE-ME-LOCAL-ONLY

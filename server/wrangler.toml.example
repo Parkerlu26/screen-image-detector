@@ -1,0 +1,20 @@
+name = "june-watcher-auth"
+main = "src/index.ts"
+compatibility_date = "2025-05-01"
+
+# D1 資料庫。database_id 要換成 `wrangler d1 create june-watcher-auth` 印出的那一串。
+# 注意：binding 必須保持 "DB"（程式裡是用 env.DB 取用資料庫），不要跟著 d1 create 的範例改成別的名字。
+[[d1_databases]]
+binding = "DB"
+database_name = "june-watcher-auth"
+database_id = "PUT_YOUR_D1_DATABASE_ID_HERE"
+
+[vars]
+# 離線寬限天數：使用者連不上後端時，仍可憑上次驗證結果繼續使用幾天。
+GRACE_DAYS = "7"
+# 登入憑證有效天數，逾期需重新輸入帳密。
+SESSION_DAYS = "30"
+
+# 以下兩個是機密，不要寫在這個檔案裡，用指令設定：
+#   wrangler secret put ADMIN_MASTER_KEY   # 管理員登入的第二道金鑰
+#   wrangler secret put BOOTSTRAP_TOKEN    # 只用於建立第一個管理員，建完就刪掉

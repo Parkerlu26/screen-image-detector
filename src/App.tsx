@@ -24,7 +24,14 @@ import {
   clearTemplateCache,
 } from './utils/imageMatching';
 import { playAlertSound, speakAlert, triggerBrowserNotification } from './utils/audio';
-import { loadCurrentSession, clearCurrentSession, loadAllUsers } from './utils/auth';
+import {
+  loadCachedSession,
+  clearCurrentSession,
+  clearLegacyLocalData,
+  logoutUser,
+  revalidateSession,
+  adminListUsers,
+} from './utils/auth';
 import confetti from 'canvas-confetti';
 
 const RULES_STORAGE_KEY = 'screen_detector_combo_rules_v1';
@@ -38,10 +45,13 @@ export default function App() {
   const isNativeFloatingWindow = window.location.hash === '#floating';
 
   // Authentication & User Session State
-  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => loadCurrentSession());
-  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => !loadCurrentSession() && !isNativeFloatingWindow);
+  // 先用本機快取讓畫面能立刻顯示，接著在下方的 effect 跟後端確認一次；
+  // 停用或到期的帳號會在那一刻被踢出來。
+  const [currentUser, setCurrentUser] = useState<UserAccount | null>(() => loadCachedSession());
+  const [isAuthModalOpen, setIsAuthModalOpen] = useState<boolean>(() => !loadCachedSession() && !isNativeFloatingWindow);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [pendingUsersCount, setPendingUsersCount] = useState(0);
+  const [sessionNotice, setSessionNotice] = useState<string>('');
 
   // App Navigation Tab
   const [activeTab, setActiveTab] = useState<'detect' | 'automation'>('detect');
@@ -455,20 +465,63 @@ export default function App() {
     });
   }, [hotkeySignature]);
 
-  // Refresh pending users count for admin
-  const refreshPendingCount = useCallback(() => {
-    try {
-      const users = loadAllUsers();
-      const count = users.filter((u) => u.status === 'pending').length;
-      setPendingUsersCount(count);
-    } catch {}
-  }, []);
+  // 待審核人數只有管理員看得到，而且要問後端才知道（帳號已不在本機）。
+  const refreshPendingCount = useCallback(async () => {
+    if (currentUser?.role !== 'admin') {
+      setPendingUsersCount(0);
+      return;
+    }
+    const result = await adminListUsers();
+    if (result.success && result.data) {
+      setPendingUsersCount(result.data.filter((u) => u.status === 'pending').length);
+    }
+  }, [currentUser?.role]);
 
   useEffect(() => {
-    refreshPendingCount();
-    const interval = setInterval(refreshPendingCount, 5000);
+    void refreshPendingCount();
+    // 這是網路請求，不像舊版讀 localStorage 那麼便宜，所以改成一分鐘一次。
+    const interval = setInterval(() => void refreshPendingCount(), 60_000);
     return () => clearInterval(interval);
   }, [refreshPendingCount]);
+
+  /**
+   * 跟後端重新確認登入狀態。啟動時做一次，之後每 10 分鐘一次，切回前景時也做一次——
+   * 管理員在後台停用或讓帳號到期後，其他電腦最慢十分鐘內就會被登出。
+   */
+  useEffect(() => {
+    if (isNativeFloatingWindow) return;
+    clearLegacyLocalData();
+
+    let cancelled = false;
+    const verify = async () => {
+      const outcome = await revalidateSession();
+      if (cancelled) return;
+      if (outcome.user) {
+        setCurrentUser(outcome.user);
+        setSessionNotice(
+          outcome.offline && outcome.graceRemainingDays !== undefined
+            ? `目前連不上帳號伺服器，離線可再使用 ${outcome.graceRemainingDays} 天。`
+            : '',
+        );
+        return;
+      }
+      // 沒有帳號可用：可能本來就沒登入，也可能是被停用／到期。
+      setCurrentUser(null);
+      setIsUserManagementOpen(false);
+      setIsAuthModalOpen(true);
+      setSessionNotice(outcome.message ?? '');
+    };
+
+    void verify();
+    const interval = setInterval(() => void verify(), 600_000);
+    const onFocus = () => void verify();
+    window.addEventListener('focus', onFocus);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+      window.removeEventListener('focus', onFocus);
+    };
+  }, [isNativeFloatingWindow]);
 
   // Request browser notification
   const handleRequestNotification = () => {
@@ -483,13 +536,16 @@ export default function App() {
   const handleLoginSuccess = (user: UserAccount) => {
     setCurrentUser(user);
     setIsAuthModalOpen(false);
+    setSessionNotice('');
   };
 
   const handleLogout = () => {
+    void logoutUser();
     clearCurrentSession();
     setCurrentUser(null);
     setIsAuthModalOpen(true);
     setIsUserManagementOpen(false);
+    setSessionNotice('');
   };
 
   // Save config wrapper
@@ -1428,6 +1484,14 @@ export default function App() {
         onChangeTab={setActiveTab}
       />
 
+      {/* 離線寬限提示：連不上帳號伺服器時讓使用者知道還剩幾天 */}
+      {currentUser && sessionNotice && (
+        <div className="px-3 lg:px-4 pt-2">
+          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+            ⚠️ {sessionNotice}
+          </div>
+        </div>
+      )}
       {/* ── TAB 1: 🎯 即時圖像辨識與清單 (Kept mounted to preserve 60FPS video stream!) ── */}
       <main className={`flex-1 w-full p-3 lg:p-4 flex flex-col lg:flex-row gap-3 lg:gap-4 overflow-hidden min-h-0 ${
         activeTab === 'detect' ? '' : 'hidden'
@@ -1601,6 +1665,7 @@ export default function App() {
       <AuthModal
         isOpen={isAuthModalOpen}
         onLoginSuccess={handleLoginSuccess}
+        notice={sessionNotice}
       />
 
       {/* Admin User Approval & Permissions Management Modal */}
@@ -1609,7 +1674,7 @@ export default function App() {
           isOpen={isUserManagementOpen}
           onClose={() => {
             setIsUserManagementOpen(false);
-            refreshPendingCount();
+            void refreshPendingCount();
           }}
           currentAdmin={currentUser}
         />

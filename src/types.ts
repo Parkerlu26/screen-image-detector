@@ -109,18 +109,23 @@ export interface AppConfig {
 export type UserRole = 'admin' | 'user';
 export type UserStatus = 'pending' | 'approved' | 'rejected' | 'disabled';
 
+/**
+ * 帳號資料一律由後端提供，客戶端不再保存密碼（連雜湊都拿不到）。
+ */
 export interface UserAccount {
   id: string;
   username: string;
-  password: string;
   displayName: string;
   role: UserRole;
   status: UserStatus;
+  /** null 代表永久開通；數字為到期時間 (epoch ms)。 */
+  expiresAt: number | null;
   createdAt: number;
-  lastLoginAt?: number;
-  approvedAt?: number;
-  approvedBy?: string;
-  note?: string;
+  lastLoginAt?: number | null;
+  approvedAt?: number | null;
+  /** 管理員帳號名稱，或 `code:JUNE-...` 代表是用開通碼自助開通的。 */
+  approvedBy?: string | null;
+  note?: string | null;
 }
 
 // ── Multi-Condition Image Automation Rule (with multi-target A, hotkey & per-rule sound) ──
@@ -140,16 +145,20 @@ export interface ImageComboRule {
   returnToCenter: boolean;
 }
 
-// ── Admin License & Client Account Record ──
-export interface LicenseRecord {
-  id: string;
-  clientUsername: string; // 註冊帳號
-  clientDisplayName?: string; // 客戶暱稱 / 備註
-  requestCode: string; // 申請代碼 (例如 REQ-USER123-A9F2)
-  activationKey: string; // 開通金鑰 (例如 ACT-...)
-  status: 'active' | 'revoked'; // 狀態
-  issuedAt: number; // 核發時間
-  note?: string; // 備註
+// ── 開通碼紀錄（由後端管理，管理員可查誰用掉了哪一組） ──
+export interface ActivationCode {
+  /** 例如 JUNE-7K3M-P2QX-9WD4。 */
+  code: string;
+  /** 開通天數；null 代表這組碼是永久開通。 */
+  days: number | null;
+  status: 'active' | 'used' | 'revoked';
+  createdAt: number;
+  /** 產生這組碼的管理員帳號。 */
+  createdBy?: string | null;
+  usedAt?: number | null;
+  /** 用掉這組碼的使用者帳號。 */
+  usedBy?: string | null;
+  note?: string | null;
 }
 
 export interface CooldownTimer {

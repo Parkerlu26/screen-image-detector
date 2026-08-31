@@ -1,7 +1,7 @@
 {
   "name": "screen-image-detector",
   "private": true,
-  "version": "1.0.0",
+  "version": "1.0.1",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {
@@ -40,7 +40,7 @@
       "allowToChangeInstallationDirectory": true
     },
     "portable": {
-      "artifactName": "${productName}_免安裝綠色版.${ext}"
+      "artifactName": "${productName}_免安裝綠色版_v${version}.${ext}"
     }
   },
   "dependencies": {

@@ -1,0 +1,17 @@
+{
+  "name": "june-watcher-auth",
+  "private": true,
+  "version": "1.0.0",
+  "scripts": {
+    "lint": "tsc --noEmit",
+    "dev": "wrangler dev --local",
+    "deploy": "wrangler deploy",
+    "db:init": "wrangler d1 execute june-watcher-auth --remote --file=./schema.sql",
+    "db:init:local": "wrangler d1 execute june-watcher-auth --local --file=./schema.sql"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "4.20260702.1",
+    "typescript": "5.8.3",
+    "wrangler": "4.42.0"
+  }
+}
