@@ -1,0 +1,21 @@
+# 依賴與建置產物
+node_modules/
+build/
+dist/
+coverage/
+*.log
+
+# 打包輸出（exe 以 GitHub Release 附件發布，不進版控）
+release/
+*.exe
+*.7z
+
+# 機密與本機設定
+.env*
+!.env.example
+*key*.txt
+
+# 編輯器 / 工具暫存
+.DS_Store
+.antigravity/
+scratch/

@@ -1,0 +1,9 @@
+@import "tailwindcss";
+
+html.floating-mode,
+body.floating-mode,
+body.floating-mode #root {
+  background: transparent !important;
+  background-color: transparent !important;
+  overflow: hidden !important;
+}

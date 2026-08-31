@@ -1,0 +1,1 @@
+{"name":"視窗螢幕圖像偵測與提醒器","description":"即時視窗螢幕擷取、自訂多目標區域圖像截圖匹配、獨立相似度與冷卻時間設定、即時辨識框標註與聲音提示工具","requestFramePermissions":[],"majorCapabilities":["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]}
