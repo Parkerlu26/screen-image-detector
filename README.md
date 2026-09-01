@@ -35,14 +35,3 @@ npm run build:exe
 - **桌面版除錯模式**：執行 `npm run electron:dev`。
 
 ---
-
-## 🔐 帳號系統（`server/`）
-
-帳號是雲端帳號，同一組帳密可以在不同電腦登入。後端是一支 Cloudflare Worker 搭配 D1 資料庫，
-原始碼在 `server/`，部署步驟見 [`server/部署說明.md`](server/部署說明.md)。
-
-- 使用者自行註冊後需經管理員開通，或直接輸入管理員發出的開通碼自助開通與續期。
-- 開通期限可選 7 / 30 / 90 / 365 天或永久，也可自訂天數；停用帳號後所有裝置會立刻失效。
-- 管理員金鑰與 bootstrap token 只存在 Cloudflare 的 secret 裡，程式碼與打包檔中都不含任何機密。
-- 程式啟動時會讀取 exe 旁邊的 `api-server.txt` 取得後端網址，換伺服器不需要重新打包；
-  也可以在 `.env` 設定 `VITE_API_BASE` 在打包時寫進程式（見 `.env.example`）。
