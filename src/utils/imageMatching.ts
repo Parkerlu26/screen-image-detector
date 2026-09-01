@@ -32,6 +32,16 @@ const CHROMA_TOLERANCE = 0.045;
 const LEVEL_TOLERANCE = 0.06;
 const LEVEL_SHARPNESS = 4;
 const PYR_COLOR_SHARPNESS = 2;
+// How much brightness/contrast drift the colour halves may forgive, expressed as
+// the range of the single gain+bias the window is allowed to be fitted through.
+// Wide enough for another monitor's gamma, a night-mode filter or an icon fading
+// in; far too narrow to fit away a genuinely different shade.
+const MIN_FIT_GAIN = 0.75;
+const MAX_FIT_GAIN = 1.35;
+const MAX_FIT_BIAS = 28;
+// Below this the fit is the identity and the second colour pass is pure cost.
+const FIT_GAIN_EPS = 0.02;
+const FIT_BIAS_EPS = 2;
 
 /** Downscale factor of the coarse search pyramid level. */
 export const PYRAMID_SCALE = 4;
@@ -49,6 +59,8 @@ export interface PackedPoints {
   lum: Float64Array;
   count: number;
   mean: number;
+  /** count * mean, so the gate can work in integer-scaled form. */
+  sumLum: number;
   std: number;
   off: Int32Array | null;
   offWidth: number;
@@ -78,6 +90,7 @@ function packPoints(pts: GrayPoint[]): PackedPoints {
     lum,
     count,
     mean,
+    sumLum: sum,
     std: count > 0 ? Math.sqrt(v / count) || 1e-4 : 1e-4,
     off: null,
     offWidth: 0,
@@ -91,6 +104,68 @@ function offsetsFor(p: PackedPoints, width: number): Int32Array {
   p.off = off;
   p.offWidth = width;
   return off;
+}
+
+/**
+ * Threshold factor for `packedPass`: everything in the gate test that depends only
+ * on the template and the cut, precomputed once per scan.
+ */
+function gateK(p: PackedPoints, gate: number): number {
+  const n = p.count;
+  return gate * gate * n * n * p.std * p.std;
+}
+
+/**
+ * "Is the sparse ZNCC at `base` at least `gate`?" without the divide or the square
+ * root, which together were about a quarter of the cost of the 9-point gate — and
+ * that gate runs on every swept position, ~1.7M of them per frame.
+ *
+ * Scaling the correlation by n^2 keeps it exact: with C = n*sum(f*t) - sum(f)*sum(t)
+ * and V = n*sum(f^2) - sum(f)^2, the ZNCC is C / (n * std_t * sqrt(V)), so for a
+ * positive gate the test is C > 0 and C^2 >= gate^2 * n^2 * std_t^2 * V. Same
+ * decision as `packedZNCC(...) >= gate`, including its variance floor (variance <= 1
+ * is exactly V <= n^2).
+ */
+function packedPass(
+  p: PackedPoints,
+  off: Int32Array,
+  buf: Uint8Array,
+  base: number,
+  k: number
+): boolean {
+  const { count, lum } = p;
+  let sum = 0;
+  let sumSq = 0;
+  let cross = 0;
+  for (let i = 0; i < count; i++) {
+    const f = buf[base + off[i]];
+    sum += f;
+    sumSq += f * f;
+    cross += f * lum[i];
+  }
+  const V = count * sumSq - sum * sum;
+  if (V <= count * count) return false;
+  const C = count * cross - sum * p.sumLum;
+  if (C <= 0) return false;
+  return C * C >= k * V;
+}
+
+// Row accumulators for the streaming gate. One frame-sized row is all that is
+// needed, and every scan reuses them, so the sweep allocates nothing.
+let scratchSum: Int32Array = new Int32Array(0);
+let scratchSq: Int32Array = new Int32Array(0);
+let scratchCross: Float64Array = new Float64Array(0);
+function rowScratchSum(n: number): Int32Array {
+  if (scratchSum.length < n) scratchSum = new Int32Array(n);
+  return scratchSum;
+}
+function rowScratchSq(n: number): Int32Array {
+  if (scratchSq.length < n) scratchSq = new Int32Array(n);
+  return scratchSq;
+}
+function rowScratchCross(n: number): Float64Array {
+  if (scratchCross.length < n) scratchCross = new Float64Array(n);
+  return scratchCross;
 }
 
 /** ZNCC of a packed subset against `buf` at the position starting at `base`. */
@@ -895,8 +970,32 @@ function computeFullScore(
   // how a different-coloured lookalike reached 94%. Now the wrong hue scales the
   // whole score down, and a correct match (colour factor ~1) keeps its old value,
   // so existing thresholds still mean the same thing.
+  // Brightness and contrast drift - another monitor's gamma, a night-mode filter,
+  // an icon fading in over a dark background - leaves the ZNCC at ~1.0 (it divides
+  // the affine relation out) but used to cost the colour halves 20-25% of the
+  // score: measured at the true position, gain 0.85 / bias -10 scored 0.771 and
+  // 60% opacity 0.738, so every such detection was lost even at a 0.8 threshold.
+  // So compare colours a second time through the single clamped gain+bias the
+  // window implies, and keep whichever comparison the window does better on.
+  // Taking the max is what makes this safe: the score can only ever rise relative
+  // to the plain comparison, so no previously-detected target can be lost, and the
+  // clamps stop the fit from turning a differently-coloured lookalike into a match.
+  const cov = cross * inv - subMean * sMean;
+  let gain = cov / (sStd * sStd);
+  if (!(gain >= MIN_FIT_GAIN)) gain = MIN_FIT_GAIN;
+  else if (gain > MAX_FIT_GAIN) gain = MAX_FIT_GAIN;
+  let bias = subMean - gain * sMean;
+  if (bias < -MAX_FIT_BIAS) bias = -MAX_FIT_BIAS;
+  else if (bias > MAX_FIT_BIAS) bias = MAX_FIT_BIAS;
+  // A near-identity fit cannot beat the plain comparison, and skipping it keeps
+  // the ordinary case - a clean capture with a little noise - at its old cost.
+  const useFit = gain < 1 - FIT_GAIN_EPS || gain > 1 + FIT_GAIN_EPS ||
+    bias < -FIT_BIAS_EPS || bias > FIT_BIAS_EPS;
+
   let chromaDiff = 0;
   let intensityDiff = 0;
+  let fitChromaDiff = 0;
+  let fitIntensityDiff = 0;
   for (let i = 0; i < numSamples; i++) {
     const s = samples[i];
     const fi = (rowOffset + s.y * frameWidth + x + s.x) << 2;
@@ -904,8 +1003,26 @@ function computeFullScore(
     const fg = framePixels[fi + 1];
     const fb = framePixels[fi + 2];
     const fTotal = fr + fg + fb + 1;
-    chromaDiff += Math.abs(fr / fTotal - s.cr) + Math.abs(fg / fTotal - s.cg);
+    const fcr = fr / fTotal;
+    const fcg = fg / fTotal;
+    chromaDiff += Math.abs(fcr - s.cr) + Math.abs(fcg - s.cg);
     intensityDiff += Math.abs(fr - s.r) + Math.abs(fg - s.g) + Math.abs(fb - s.b);
+    if (useFit) {
+      // A real screen clamps, so the fitted template does too.
+      let mr = gain * s.r + bias;
+      let mg = gain * s.g + bias;
+      let mb = gain * s.b + bias;
+      if (mr < 0) mr = 0; else if (mr > 255) mr = 255;
+      if (mg < 0) mg = 0; else if (mg > 255) mg = 255;
+      if (mb < 0) mb = 0; else if (mb > 255) mb = 255;
+      const mTotal = mr + mg + mb + 1;
+      fitChromaDiff += Math.abs(fcr - mr / mTotal) + Math.abs(fcg - mg / mTotal);
+      fitIntensityDiff += Math.abs(fr - mr) + Math.abs(fg - mg) + Math.abs(fb - mb);
+    }
+  }
+  if (useFit) {
+    if (fitChromaDiff < chromaDiff) chromaDiff = fitChromaDiff;
+    if (fitIntensityDiff < intensityDiff) intensityDiff = fitIntensityDiff;
   }
 
   // Both halves have a dead zone first. A screen capture is never pixel-exact -
@@ -1349,18 +1466,53 @@ function scanRegion(
     // intermediate gate rejects most of them for a third of the work.
     const gateOff = offsetsFor(pyrGate, pw);
     const gate2Cut = midGate * 0.85;
+    const kCoarse = gateK(pyrCoarse, coarseGate);
+    const kGate2 = gateK(pyrGate, gate2Cut);
+    const kMid = gateK(pyrMid, midGate);
     // The 9-point gate runs on every position (~2M/frame across 15 targets), so
     // everything after it must stay rare. Positions that clear it used to jump
     // straight to the 64-point mid score; a 25-point intermediate gate throws
     // out 90% of them for a third of the work.
+    const rowLen = pMaxX - pMinX + 1;
+    const cN = pyrCoarse.count;
+    const cLum = pyrCoarse.lum;
+    const cSumLum = pyrCoarse.sumLum;
+    const cNN = cN * cN;
+    const rowSum = rowScratchSum(rowLen);
+    const rowSq = rowScratchSq(rowLen);
+    const rowCross = rowScratchCross(rowLen);
     for (let py = pMinY; py <= pMaxY; py++) {
       const row = py * pw;
-      for (let px = pMinX; px <= pMaxX; px++) {
+      // Stage 0: the 9-point gate for the whole row at once. Same arithmetic in the
+      // same order as the per-position version, so the surviving set is identical —
+      // but every frame read is sequential instead of jumping across pyramid rows,
+      // which is where most of the gate's time actually went.
+      rowSum.fill(0, 0, rowLen);
+      rowSq.fill(0, 0, rowLen);
+      rowCross.fill(0, 0, rowLen);
+      for (let i = 0; i < cN; i++) {
+        const o = row + pMinX + coarseOff[i];
+        const t = cLum[i];
+        for (let j = 0; j < rowLen; j++) {
+          const f = buf[o + j];
+          rowSum[j] += f;
+          rowSq[j] += f * f;
+          rowCross[j] += f * t;
+        }
+      }
+      for (let j = 0; j < rowLen; j++) {
+        const fs = rowSum[j];
+        const V = cN * rowSq[j] - fs * fs;
+        if (V <= cNN) continue;
+        const C = cN * rowCross[j] - fs * cSumLum;
+        if (C <= 0) continue;
+        if (C * C < kCoarse * V) continue;
+        const px = pMinX + j;
         const base = row + px;
-        if (packedZNCC(pyrCoarse, coarseOff, buf, base) < coarseGate) continue;
-        if (packedZNCC(pyrGate, gateOff, buf, base) < gate2Cut) continue;
+        if (!packedPass(pyrGate, gateOff, buf, base, kGate2)) continue;
+        if (!packedPass(pyrMid, midOff, buf, base, kMid)) continue;
+        // Only the ~0.16% of positions that clear the mid cut need the real value.
         const midScore = packedZNCC(pyrMid, midOff, buf, base);
-        if (midScore < midGate) continue;
         // Rank on shape *and* hue. A luminance-only rank lets recoloured
         // lookalikes tie with the real icon and crowd the candidate list, which
         // measured as 3/48 lost detections once decoys were in the frame.

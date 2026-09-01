@@ -10,6 +10,12 @@ import { SettingsModal } from './components/SettingsModal';
 import { SourcePickerModal, DesktopSource } from './components/SourcePickerModal';
 import { AuthModal } from './components/AuthModal';
 import { UserManagementModal } from './components/UserManagementModal';
+import {
+  UpdateModal,
+  UpdateInfo,
+  updateApi,
+  SKIPPED_VERSION_KEY,
+} from './components/UpdateModal';
 import { AutomationAndTimers } from './components/AutomationAndTimers';
 import { FloatingTimerOverlay } from './components/FloatingTimerOverlay';
 import {
@@ -165,6 +171,11 @@ export default function App() {
 
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [isSourcePickerOpen, setIsSourcePickerOpen] = useState(false);
+
+  // 軟體更新。開機自動檢查一次，有新版才跳出來；presetInfo 是那次檢查的結果，
+  // 手動從設定裡打開時傳 null，讓對話框自己重新查一次。
+  const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
+  const [autoUpdateInfo, setAutoUpdateInfo] = useState<UpdateInfo | null>(null);
 
   // Browser Notification Status
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -483,6 +494,33 @@ export default function App() {
     const interval = setInterval(() => void refreshPendingCount(), 60_000);
     return () => clearInterval(interval);
   }, [refreshPendingCount]);
+
+  /**
+   * 開機檢查更新。晚幾秒再問，免得跟啟動時的登入驗證擠在一起；只有真的有新版、
+   * 而且使用者沒有對那個版本按過「跳過此版本」時才會跳出來。
+   */
+  useEffect(() => {
+    if (isNativeFloatingWindow) return;
+    const api = updateApi();
+    if (!api?.checkForUpdate) return;
+    let cancelled = false;
+    const timer = setTimeout(() => {
+      void api.checkForUpdate!().then((info) => {
+        if (cancelled || !info.ok || !info.hasUpdate) return;
+        let skipped = '';
+        try {
+          skipped = localStorage.getItem(SKIPPED_VERSION_KEY) || '';
+        } catch {}
+        if (skipped && skipped === info.latestVersion) return;
+        setAutoUpdateInfo(info);
+        setIsUpdateModalOpen(true);
+      });
+    }, 4000);
+    return () => {
+      cancelled = true;
+      clearTimeout(timer);
+    };
+  }, [isNativeFloatingWindow]);
 
   /**
    * 跟後端重新確認登入狀態。啟動時做一次，之後每 10 分鐘一次，切回前景時也做一次——
@@ -1652,6 +1690,17 @@ export default function App() {
         onUpdateSettings={handleUpdateSettings}
         onRequestBrowserNotification={handleRequestNotification}
         notificationPermission={notificationPermission}
+        onCheckForUpdate={() => {
+          setAutoUpdateInfo(null);
+          setIsUpdateModalOpen(true);
+        }}
+      />
+
+      {/* 軟體更新（開機自動檢查，或從設定裡手動檢查） */}
+      <UpdateModal
+        isOpen={isUpdateModalOpen}
+        onClose={() => setIsUpdateModalOpen(false)}
+        presetInfo={autoUpdateInfo}
       />
 
       {/* Electron Desktop Window / Screen Selector Modal */}

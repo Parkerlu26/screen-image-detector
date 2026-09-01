@@ -1,6 +1,6 @@
 import React from 'react';
 import { GlobalSettings } from '../types';
-import { Settings, X, Bell, Eye, Zap, Volume2, Sparkles, Mic } from 'lucide-react';
+import { Settings, X, Bell, Eye, Zap, Volume2, Sparkles, Mic, Download } from 'lucide-react';
 import { speakAlert } from '../utils/audio';
 
 interface SettingsModalProps {
@@ -10,6 +10,8 @@ interface SettingsModalProps {
   onUpdateSettings: (newSettings: GlobalSettings) => void;
   onRequestBrowserNotification: () => void;
   notificationPermission: NotificationPermission | 'unsupported';
+  /** 打開「軟體更新」對話框。開機時也會自動檢查一次，這裡是手動的入口。 */
+  onCheckForUpdate?: () => void;
 }
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
@@ -19,6 +21,7 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
   onUpdateSettings,
   onRequestBrowserNotification,
   notificationPermission,
+  onCheckForUpdate,
 }) => {
   if (!isOpen) return null;
 
@@ -236,6 +239,32 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
               </div>
             </div>
           </div>
+
+          {/* 軟體更新 */}
+          {onCheckForUpdate && (
+            <div className="space-y-3">
+              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
+                <Download className="w-3.5 h-3.5" />
+                軟體更新
+              </h3>
+              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm text-white font-medium">檢查是否有新版本</p>
+                  <p className="text-xs text-slate-500">
+                    每次啟動會自動檢查一次，有新版可以直接一鍵下載更新。
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={onCheckForUpdate}
+                  className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1 shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  檢查更新
+                </button>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* Footer */}

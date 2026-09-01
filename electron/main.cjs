@@ -5,6 +5,7 @@ const path = require('path');
 const APP_ICON = path.join(__dirname, '..', 'assets', 'icon.ico');
 const fs = require('fs');
 const { spawn } = require('child_process');
+const { registerUpdateHandlers } = require('./updater.cjs');
 
 let mainWindow = null;
 let floatingWindow = null;
@@ -591,6 +592,7 @@ function createWindow() {
 
 app.whenReady().then(() => {
   initPowerShellWorker();
+  registerUpdateHandlers(ipcMain);
 
   session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
     callback(true);

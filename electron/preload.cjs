@@ -28,5 +28,16 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('floating-window-closed', listener);
     return () => ipcRenderer.removeListener('floating-window-closed', listener);
   },
+  // 檢查更新 / 一鍵更新。downloadUpdate 成功後程式會自己關掉再開新版。
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
+  downloadUpdate: (params) => ipcRenderer.invoke('download-update', params),
+  cancelUpdateDownload: () => ipcRenderer.invoke('cancel-update-download'),
+  openReleasePage: (url) => ipcRenderer.invoke('open-release-page', url),
+  onUpdateDownloadProgress: (callback) => {
+    const listener = (event, data) => callback(data);
+    ipcRenderer.on('update-download-progress', listener);
+    return () => ipcRenderer.removeListener('update-download-progress', listener);
+  },
   isElectron: true,
 });
