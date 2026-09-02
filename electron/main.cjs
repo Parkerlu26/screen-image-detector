@@ -106,24 +106,9 @@ let pendingRects = new Map();
 let rectSeq = 0;
 
 // Virtual Key Code Map
-const VK_MAP = {
-  'F1': 0x70, 'F2': 0x71, 'F3': 0x72, 'F4': 0x73, 'F5': 0x74, 'F6': 0x75,
-  'F7': 0x76, 'F8': 0x77, 'F9': 0x78, 'F10': 0x79, 'F11': 0x7A, 'F12': 0x7B,
-  '0': 0x30, '1': 0x31, '2': 0x32, '3': 0x33, '4': 0x34,
-  '5': 0x35, '6': 0x36, '7': 0x37, '8': 0x38, '9': 0x39,
-  'A': 0x41, 'B': 0x42, 'C': 0x43, 'D': 0x44, 'E': 0x45, 'F': 0x46,
-  'G': 0x47, 'H': 0x48, 'I': 0x49, 'J': 0x4A, 'K': 0x4B, 'L': 0x4C,
-  'M': 0x4D, 'N': 0x4E, 'O': 0x4F, 'P': 0x50, 'Q': 0x51, 'R': 0x52,
-  'S': 0x53, 'T': 0x54, 'U': 0x55, 'V': 0x56, 'W': 0x57, 'X': 0x58,
-  'Y': 0x59, 'Z': 0x5A, 'SPACE': 0x20, 'TAB': 0x09, 'SHIFT': 0x10, 'CONTROL': 0x11, 'ALT': 0x12
-};
-
-function getVkCode(key) {
-  const upper = key.trim().toUpperCase();
-  if (VK_MAP[upper]) return VK_MAP[upper];
-  if (upper.length === 1) return upper.charCodeAt(0);
-  return null;
-}
+// 名稱→虛擬鍵碼的對應搬到 keymap.cjs，因為它必須跟畫面層的側錄命名逐字一致，
+// 而那件事需要一支能單獨跑的測試來守（scratch/keymaptest.mts）。
+const { getVkCode } = require('./keymap.cjs');
 
 function initPowerShellWorker() {
   try {
@@ -559,15 +544,21 @@ function createWindow() {
   });
 
   // Non-blocking Pass-Through Key Registration (Never blocks typing or games!)
+  //
+  // 對不到虛擬鍵就必須回 false。舊版不管成不成功一律回 true，於是「這顆鍵永遠不會
+  // 被監看」這件事沒有任何人知道 —— 畫面上顯示註冊成功，使用者按下去卻毫無反應，
+  // 只能從「計時器不會開始」反推。回 false 之後畫面層才有機會告訴使用者換一顆鍵。
   ipcMain.handle('register-global-hotkey', async (event, { hotkey, timerId, ruleId }) => {
     try {
       if (!hotkey) return false;
       const normalizedKey = hotkey.trim().toUpperCase();
       const vk = getVkCode(normalizedKey);
-      if (vk) {
-        activeHotkeys.set(normalizedKey, { vk, timerId, ruleId });
-        updateWatchedKeysInWorker();
+      if (vk === null) {
+        console.warn('這個快捷鍵名稱對不到任何按鍵，不會被監看:', normalizedKey);
+        return false;
       }
+      activeHotkeys.set(normalizedKey, { vk, timerId, ruleId });
+      updateWatchedKeysInWorker();
       return true;
     } catch (err) {
       console.warn('Failed to register non-blocking key:', hotkey, err);

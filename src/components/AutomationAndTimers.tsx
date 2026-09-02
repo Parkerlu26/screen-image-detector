@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { Target, ImageComboRule, CooldownTimer, SoundType } from '../types';
 import { playAlertSound, speakAlert } from '../utils/audio';
+import { normalizeHotkeyName } from '../utils/hotkeys';
 import {
   Sparkles,
   MousePointerClick,
@@ -124,15 +125,16 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
       e.preventDefault();
       e.stopPropagation();
 
-      let keyName = e.key.toUpperCase();
-      if (e.code.startsWith('Key')) keyName = e.code.replace('Key', '').toUpperCase();
-      else if (e.code.startsWith('Digit')) keyName = e.code.replace('Digit', '');
-      else if (e.code.startsWith('Numpad')) keyName = 'NUM' + e.code.replace('Numpad', '');
-      else if (e.key === ' ') keyName = 'SPACE';
-      else if (e.key === 'Escape') {
+      // Escape 是「取消側錄」，所以它自己不能被錄成快捷鍵
+      if (e.code === 'Escape' || e.key === 'Escape') {
         setIsRecordingHotkey(false);
         return;
       }
+
+      // 認不出這一下是哪顆鍵（瀏覽器沒給 e.code 又被輸入法吃掉）就不要記，
+      // 維持側錄狀態讓使用者再按一次 —— 存下認不出的名字等於做出一個永遠不會觸發的設定。
+      const keyName = normalizeHotkeyName(e);
+      if (!keyName) return;
 
       setTHotkey(keyName);
       setIsRecordingHotkey(false);
@@ -152,15 +154,13 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
       e.preventDefault();
       e.stopPropagation();
 
-      let keyName = e.key.toUpperCase();
-      if (e.code.startsWith('Key')) keyName = e.code.replace('Key', '').toUpperCase();
-      else if (e.code.startsWith('Digit')) keyName = e.code.replace('Digit', '');
-      else if (e.code.startsWith('Numpad')) keyName = 'NUM' + e.code.replace('Numpad', '');
-      else if (e.key === ' ') keyName = 'SPACE';
-      else if (e.key === 'Escape') {
+      if (e.code === 'Escape' || e.key === 'Escape') {
         setIsRecordingRuleHotkey(false);
         return;
       }
+
+      const keyName = normalizeHotkeyName(e);
+      if (!keyName) return;
 
       setRuleHotkey(keyName);
       setIsRecordingRuleHotkey(false);

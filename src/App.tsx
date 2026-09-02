@@ -30,6 +30,7 @@ import {
   clearTemplateCache,
 } from './utils/imageMatching';
 import { playAlertSound, speakAlert, triggerBrowserNotification } from './utils/audio';
+import { normalizeHotkeyName } from './utils/hotkeys';
 import {
   loadCachedSession,
   clearCurrentSession,
@@ -386,16 +387,40 @@ export default function App() {
   }, [settings.enableAudio, settings.masterVolume, settings.speechVolume]);
 
   // Global Hotkey Trigger Action (Timers countdown + Rules toggle)
+  //
+  // 同一次按鍵會從兩條路進來：主程序的全域監看（不管焦點在哪都收得到），以及
+  // 這個視窗自己的 keydown（焦點在本視窗時）。計時器被觸發兩次沒差（都是歸零重數），
+  // 但條件聯動是「切換啟用」，切兩次等於沒切 —— 焦點在主視窗時按下去會像壞掉。
+  // 所以同一個快捷鍵名稱在 200ms 內只算一次。
+  const lastTriggerRef = useRef<Map<string, number>>(new Map());
   const triggerHotkey = useCallback(
     (hotkey: string, specificTimerId?: string, specificRuleId?: string) => {
       const cleanKey = hotkey.trim().toUpperCase();
       const now = Date.now();
 
+      // 空字串是「認不出這顆鍵」（normalizeHotkeyName 對輸入法佔位字會回空）。
+      // 不能往下走：它會跟「沒設快捷鍵」的計時器意外對上，變成按任何怪鍵都在觸發。
+      if (!cleanKey) return;
+
+      const last = lastTriggerRef.current.get(cleanKey);
+      if (last !== undefined && now - last < 200) return;
+      lastTriggerRef.current.set(cleanKey, now);
+
       // 1. Check timers
+      //
+      // 名字相符就算中，另外再收下主程序指名的那一個。舊版是「有指名就只看指名」，
+      // 於是兩個計時器綁同一顆鍵時只有其中一個會動 —— 主程序的監看清單以按鍵名稱
+      // 為索引，同名只留得下最後註冊的那一筆，它指名的就永遠是那一個。
+      //
+      // 指名比對一定要先確認「真的有指名」：視窗內按鍵這條路沒有 id，
+      // 少了這個判斷就變成 undefined === undefined，任何沒有 id 的資料都會被按到什麼都觸發。
+      const matchesId = (id: string | undefined, wanted: string | undefined) =>
+        wanted !== undefined && id === wanted;
+
       setTimers((prev) =>
         prev.map((t) => {
           if (
-            (specificTimerId ? t.id === specificTimerId : t.hotkey.trim().toUpperCase() === cleanKey) &&
+            (matchesId(t.id, specificTimerId) || t.hotkey.trim().toUpperCase() === cleanKey) &&
             t.enabled !== false
           ) {
             return {
@@ -414,11 +439,7 @@ export default function App() {
       // 2. Check rules (Toggle enable state)
       setRules((prev) =>
         prev.map((r) => {
-          if (
-            specificRuleId
-              ? r.id === specificRuleId
-              : r.hotkey && r.hotkey.trim().toUpperCase() === cleanKey
-          ) {
+          if (matchesId(r.id, specificRuleId) || (r.hotkey && r.hotkey.trim().toUpperCase() === cleanKey)) {
             const nextEnabled = !r.enabled;
             speakAlert(`條件聯動 ${r.name} ${nextEnabled ? '已啟用' : '已停用'}`, settings.speechVolume ?? 1.0);
             return { ...r, enabled: nextEnabled };
@@ -433,9 +454,12 @@ export default function App() {
   // 1. Permanent Global Hotkey Listener (Mounted ONCE on startup)
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
+      // 按著不放時 keydown 會連發，這裡要的是「按下去那一下」
+      if (e.repeat) return;
       const activeTag = (document.activeElement?.tagName || '').toLowerCase();
       if (activeTag === 'input' || activeTag === 'textarea') return;
-      triggerHotkey(e.key);
+      // 必須跟側錄時用同一套命名，否則存的是 'DELETE'、這裡送的是 'Delete'，永遠對不上
+      triggerHotkey(normalizeHotkeyName(e));
     };
 
     window.addEventListener('keydown', handleKeyDown);
@@ -464,15 +488,27 @@ export default function App() {
   useEffect(() => {
     if (!window.electronAPI?.registerGlobalHotkey) return;
 
+    // 註冊會回報成敗。對不到虛擬鍵的名字（例如輸入法把按鍵吃掉、只錄到 'PROCESS'）
+    // 不可能被監看，按下去永遠沒反應 —— 至少要在主控台講清楚是哪一個。
+    const warnIfRejected = (label: string, hotkey: string) => (ok: boolean | undefined) => {
+      if (ok === false) console.warn(`${label} 的快捷鍵「${hotkey}」無法監看，請重新設定一顆鍵`);
+    };
+
     window.electronAPI.unregisterAllHotkeys?.().then(() => {
       timers.forEach((t) => {
         if (t.hotkey && t.enabled !== false) {
-          window.electronAPI?.registerGlobalHotkey?.({ hotkey: t.hotkey, timerId: t.id });
+          // 包一層 Promise.resolve：橋接層不在時取值會是 undefined，直接 .then 會炸掉
+          // 整個註冊迴圈，後面的計時器就都沒註冊了。
+          Promise.resolve(
+            window.electronAPI?.registerGlobalHotkey?.({ hotkey: t.hotkey, timerId: t.id })
+          ).then(warnIfRejected(`計時器「${t.name}」`, t.hotkey));
         }
       });
       rules.forEach((r) => {
         if (r.hotkey) {
-          window.electronAPI?.registerGlobalHotkey?.({ hotkey: r.hotkey, ruleId: r.id });
+          Promise.resolve(
+            window.electronAPI?.registerGlobalHotkey?.({ hotkey: r.hotkey, ruleId: r.id })
+          ).then(warnIfRejected(`條件聯動「${r.name}」`, r.hotkey));
         }
       });
     });
