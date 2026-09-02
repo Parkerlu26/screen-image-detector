@@ -3,6 +3,7 @@ import { Rect, Target } from '../types';
 import {
   clearTemplateCache,
   matchTemplateInFrame,
+  normalizeRoi,
   prepareTemplate,
   resetFrameCache,
   updateFramePlanes,
@@ -170,16 +171,36 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
           if (!template) continue;
           let roi: Rect | null = null;
           if (spec.normalizedRoi) {
-            // Resolve against the full frame, then move into band coordinates and
-            // clip. A band that no longer overlaps the ROI has nothing to do.
-            const rx = spec.normalizedRoi.x * fullW;
-            const ry = spec.normalizedRoi.y * fullH - bandY;
-            const rw = spec.normalizedRoi.width * fullW;
-            const rh = spec.normalizedRoi.height * fullH;
-            const top = Math.max(0, ry);
-            const bottom = Math.min(h, ry + rh);
-            if (bottom - top < template.height) continue;
-            roi = { x: rx, y: top, width: rw, height: bottom - top };
+            // Resolve against the full frame, then move into band coordinates;
+            // `normalizeRoi` does the clipping, and reads a box smaller than the
+            // template as "the template covers this box" instead of collapsing to
+            // one position.
+            const rect = {
+              x: spec.normalizedRoi.x * fullW,
+              y: spec.normalizedRoi.y * fullH - bandY,
+              width: spec.normalizedRoi.width * fullW,
+              height: spec.normalizedRoi.height * fullH,
+            };
+            roi = normalizeRoi(rect, template.width, template.height, w, h);
+            if (!roi) {
+              // Not one position inside this frame can hold the template against
+              // that box. Report a miss instead of dropping the target: the main
+              // thread refills any target a worker leaves out with the previous
+              // frame's result, so a silent omission freezes a stale box on screen
+              // indefinitely, whereas a 0 simply loses the merge to any worker that
+              // did search.
+              results.push({
+                targetId: spec.id,
+                score: 0,
+                box: {
+                  x: 0,
+                  y: bandY,
+                  width: template.width,
+                  height: template.height,
+                },
+              });
+              continue;
+            }
           }
           try {
             const { score, box } = matchTemplateInFrame(

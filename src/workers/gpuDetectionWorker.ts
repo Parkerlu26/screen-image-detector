@@ -5,6 +5,7 @@ import {
   getOrComputeFramePyramid,
   matchTemplateInFrame,
   matchWithCandidates,
+  normalizeRoi,
   prepareTemplate,
   pyramidRankScore,
   resetFrameCache,
@@ -81,6 +82,47 @@ let targetsDirty = true;
 let sweepWidth = 0;
 let sweepHeight = 0;
 
+// ── Unchanged-frame gate ──
+//
+// Screen capture is lossless: a motionless window arrives byte-identical, and the
+// same templates over the same pixels can only produce the same scores. The CPU
+// worker gets this short-circuit for free from `updateFramePlanes`, which compares
+// the frame as part of rebuilding its luminance planes. This worker has no planes
+// to rebuild — the sweep runs on the card and the refinement reads RGBA directly,
+// which is why `matchWithCandidates` is called with a null gray plane — so the
+// comparison has to stand on its own here. It is worth standing on its own: one
+// pass over the frame that stops at the first differing pixel, instead of a full
+// texture upload, two compute passes, a buffer map and the refinement of every
+// candidate of every target.
+//
+// Without this, an idle screen cost the GPU path a full sweep while costing the
+// CPU pool one memcmp — which also made the backend trial in App.tsx compare two
+// different questions.
+let prevFrameWords: Uint32Array | null = null;
+let cachedResults: WorkerMatch[] = [];
+
+/** True when this frame is byte-identical to the previous one. */
+function frameUnchanged(frameData: ImageData): boolean {
+  const bytes = frameData.data;
+  // getImageData hands out a fresh buffer per call, so this view can simply be
+  // retained as "the previous frame" instead of copying 8 MB.
+  const words = new Uint32Array(bytes.buffer, bytes.byteOffset, bytes.byteLength >> 2);
+  const prev = prevFrameWords;
+  prevFrameWords = words;
+  if (!prev || prev.length !== words.length) return false;
+  for (let i = 0, n = words.length; i < n; i++) {
+    if (words[i] !== prev[i]) return false;
+  }
+  return true;
+}
+
+/** Force the next frame to be swept (target set, frame size or device changed). */
+function invalidateFrameGate(): void {
+  prevFrameWords = null;
+  cachedResults = [];
+  resetFrameCache();
+}
+
 function giveUpOnGpu(reason: string): void {
   if (!gpuUsable && selfTestDone) return;
   gpuUsable = false;
@@ -94,7 +136,7 @@ function ensureCanvas(w: number, h: number): OffscreenCanvasRenderingContext2D |
   if (!canvas || canvas.width !== w || canvas.height !== h) {
     canvas = new OffscreenCanvas(w, h);
     ctx = canvas.getContext('2d', { willReadFrequently: true });
-    resetFrameCache();
+    invalidateFrameGate();
   }
   return ctx;
 }
@@ -137,8 +179,13 @@ function resolveRoi(
   if (!spec.normalizedRoi) return null;
   const r = spec.normalizedRoi;
   const rect = { x: r.x * w, y: r.y * h, width: r.width * w, height: r.height * h };
-  if (rect.width < template.width || rect.height < template.height) return null;
-  return rect;
+  // An ROI smaller than the template used to return null here, which means "no
+  // ROI" — a full-screen sweep, so the target could be reported anywhere on
+  // screen precisely because the user had restricted it to a small area.
+  // `normalizeRoi` reads that box the other way round (the template covers it) and
+  // only returns null when no position fits in the frame at all, i.e. the template
+  // is bigger than the screen — and then both matchers score 0 anyway.
+  return normalizeRoi(rect, template.width, template.height, w, h);
 }
 
 function decodeCandidates(set: GpuCandidateSet): SweepCandidate[] {
@@ -277,7 +324,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       }
     }
     await syncTemplates();
-    resetFrameCache();
+    invalidateFrameGate();
     targetsDirty = true;
     if (!gpuInit) {
       gpuInit = (async () => {
@@ -296,6 +343,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
   const w = bitmap.width;
   const h = bitmap.height;
   let results: WorkerMatch[] = [];
+  let unchanged = false;
 
   try {
     const c = ensureCanvas(w, h);
@@ -304,74 +352,94 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
       if (gpuInit) await gpuInit;
       if (sweeper?.lost) giveUpOnGpu('device lost');
 
-      if (sweeper && gpuUsable && (targetsDirty || w !== sweepWidth || h !== sweepHeight)) {
-        syncGpuTargets(w, h);
-      }
-
-      // Issue the GPU work first, then do the readback while the card is busy:
-      // `sweep` runs synchronously up to its buffer map, so the frame is already
-      // uploaded and the compute passes are already submitted by the time
-      // `getImageData` starts. The two halves of the frame overlap for free.
-      const sweepPromise =
-        sweeper && gpuUsable ? sweeper.sweep(bitmap, w, h) : null;
-
+      // The frame is read back and compared before any GPU work is issued. The
+      // previous order issued the sweep first so that `getImageData` overlapped
+      // with the card, but that overlap is only worth having on a frame that has
+      // to be searched: it bought a few milliseconds on those and paid a full
+      // sweep on every idle frame, and a watched window is idle most of the time.
       c.drawImage(bitmap, 0, 0);
       const frameData = c.getImageData(0, 0, w, h);
-      const sets = sweepPromise ? await sweepPromise : null;
 
-      if (sweepPromise && !sets) {
-        giveUpOnGpu('sweep failed');
-      }
-
-      if (sets) {
-        // An empty target list means the planes were never dispatched, so there
-        // is nothing to compare the readback against yet.
-        if (!selfTestDone && sets.length > 0) {
-          const planes = await sweeper!.readPlanes();
-          const failure = selfTest(frameData, sets, planes);
-          if (failure) {
-            giveUpOnGpu(failure);
-          } else {
-            selfTestDone = true;
-            post({ type: 'mode', gpu: true, targets: sets.length });
-          }
-        }
-      }
-
-      if (sets && gpuUsable) {
-        const byId = new Map(sets.map((s) => [s.targetId, s]));
-        let overflowed = 0;
-        for (const spec of specs) {
-          const template = prepared.get(spec.id);
-          if (!template) continue;
-          const roi = resolveRoi(spec, template, w, h);
-          const set = byId.get(spec.id);
-          try {
-            // A target with no pyramid level (a template under 8px) never reaches
-            // the GPU, so it keeps the ordinary CPU search.
-            const { score, box } = set
-              ? matchWithCandidates(
-                  frameData,
-                  template,
-                  decodeCandidates(set),
-                  roi,
-                  algorithm,
-                  spec.threshold
-                )
-              : matchTemplateInFrame(frameData, template, roi, algorithm, spec.threshold);
-            if (set?.overflow) overflowed++;
-            results.push({ targetId: spec.id, score, box });
-          } catch {
-            // Skip this target for this frame only.
-          }
-        }
-        if (overflowed > 0) post({ type: 'overflow', count: overflowed });
+      if (frameUnchanged(frameData)) {
+        // Nothing moved. Replay the previous scores: the main thread still gets an
+        // ordinary result message, so cooldowns, sounds and automation behave
+        // exactly as if the frame had been searched — which it effectively was.
+        unchanged = true;
+        results = cachedResults;
       } else {
-        results = cpuMatch(frameData, w, h);
+        if (sweeper && gpuUsable && (targetsDirty || w !== sweepWidth || h !== sweepHeight)) {
+          syncGpuTargets(w, h);
+        }
+
+        const sweeping = !!(sweeper && gpuUsable);
+        const sets = sweeping ? await sweeper!.sweep(bitmap, w, h) : null;
+
+        if (sweeping && !sets) {
+          giveUpOnGpu('sweep failed');
+        }
+
+        if (sets) {
+          // An empty target list means the planes were never dispatched, so there
+          // is nothing to compare the readback against yet.
+          if (!selfTestDone && sets.length > 0) {
+            const planes = await sweeper!.readPlanes();
+            const failure = selfTest(frameData, sets, planes);
+            if (failure) {
+              giveUpOnGpu(failure);
+            } else {
+              selfTestDone = true;
+              post({ type: 'mode', gpu: true, targets: sets.length });
+            }
+          }
+        }
+
+        if (sets && gpuUsable) {
+          const byId = new Map(sets.map((s) => [s.targetId, s]));
+          let overflowed = 0;
+          for (const spec of specs) {
+            const template = prepared.get(spec.id);
+            if (!template) continue;
+            const roi = resolveRoi(spec, template, w, h);
+            const set = byId.get(spec.id);
+            try {
+              // A target with no pyramid level (a template under 8px) never reaches
+              // the GPU, so it keeps the ordinary CPU search. So does a target whose
+              // candidate list overflowed: the kernel appends in dispatch order and
+              // drops everything past the cap, so the dropped positions are not the
+              // low-ranking ones and the true peak can be among them. Redoing that
+              // one target on the CPU costs ~10 ms on the frame it happens and is
+              // the only way the result stays the same as if the cap were infinite.
+              const usable = set && !set.overflow ? set : null;
+              const { score, box } = usable
+                ? matchWithCandidates(
+                    frameData,
+                    template,
+                    decodeCandidates(usable),
+                    roi,
+                    algorithm,
+                    spec.threshold
+                  )
+                : matchTemplateInFrame(frameData, template, roi, algorithm, spec.threshold);
+              if (set?.overflow) overflowed++;
+              results.push({ targetId: spec.id, score, box });
+            } catch {
+              // Skip this target for this frame only.
+            }
+          }
+          if (overflowed > 0) post({ type: 'overflow', count: overflowed });
+        } else {
+          results = cpuMatch(frameData, w, h);
+        }
+
+        cachedResults = results;
       }
     }
   } catch {
-    // Never leave the main thread waiting for a frame that will not come.
+    // Never leave the main thread waiting for a frame that will not come, and
+    // never let a half-finished frame become the gate's reference: whatever state
+    // the caches are in, the next frame is searched from scratch.
+    invalidateFrameGate();
+    unchanged = false;
     results = [];
   } finally {
     bitmap.close();
@@ -382,7 +450,7 @@ self.onmessage = async (event: MessageEvent<InboundMessage>) => {
     frameId: msg.frameId,
     width: msg.fullWidth || w,
     height: msg.fullHeight || h,
-    unchanged: false,
+    unchanged,
     results,
   });
 };

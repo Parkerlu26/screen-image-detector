@@ -1,7 +1,9 @@
 {
   "name": "screen-image-detector",
   "private": true,
-  "version": "1.2.0",
+  "version": "1.3.0",
+  "description": "六月幫你顧：盯著畫面上的圖案，出現就提醒你、也可以幫你按下去",
+  "author": "Parkerlu26",
   "type": "module",
   "main": "electron/main.cjs",
   "scripts": {

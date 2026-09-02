@@ -1,7 +1,8 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
 
-/** main process 回傳的檢查結果。 */
+/** main process 回傳的檢查結果。刻意沒有 downloadUrl：畫面層不需要知道，也不該
+ *  有機會影響下載來源——那個檔案下載完會被當成程式本身執行。 */
 export interface UpdateInfo {
   ok: boolean;
   currentVersion: string;
@@ -11,20 +12,24 @@ export interface UpdateInfo {
   notes?: string;
   publishedAt?: string;
   pageUrl?: string;
-  downloadUrl?: string;
   downloadSize?: number;
-  /** 有 exe 附件、是打包版、資料夾可寫，三者都成立才能一鍵更新。 */
+  /** 有 exe 附件、是打包版、找得到自己的 exe、資料夾可寫，四者都成立才能一鍵更新。 */
   canAutoUpdate?: boolean;
+  /** 這個附件有 GitHub 提供的 sha256 可以驗證。 */
+  verifiable?: boolean;
+  /** 這個版本已經換過檔了，但版號還是沒進步——再更新一次也會是同樣結果。 */
+  staleRetry?: boolean;
   message?: string;
 }
 
 interface UpdateApi {
   checkForUpdate?: () => Promise<UpdateInfo>;
-  downloadUpdate?: (params: {
-    downloadUrl: string;
-    version: string;
-    downloadSize: number;
-  }) => Promise<{ ok: boolean; message?: string; cancelled?: boolean; restarting?: boolean }>;
+  downloadUpdate?: () => Promise<{
+    ok: boolean;
+    message?: string;
+    cancelled?: boolean;
+    restarting?: boolean;
+  }>;
   cancelUpdateDownload?: () => Promise<boolean>;
   openReleasePage?: (url?: string) => Promise<boolean>;
   onUpdateDownloadProgress?: (
@@ -59,6 +64,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
   const isDownloading = progress !== null && !restarting;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
+  // 同一次開啟裡只允許一個下載在跑；主程序也會擋，這裡是為了不讓畫面出現兩條進度。
+  const busyRef = useRef(false);
 
   const check = useCallback(async () => {
     const api = updateApi();
@@ -93,21 +100,28 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
 
   const startDownload = async () => {
     const api = updateApi();
-    if (!api?.downloadUpdate || !info?.downloadUrl || !info.latestVersion) return;
+    // 條件是「主程序說可以自動更新」，不是「畫面上有網址」。要下載什麼由主程序決定。
+    if (!api?.downloadUpdate || !info?.canAutoUpdate || busyRef.current) return;
+    busyRef.current = true;
     setError('');
     setProgress({ received: 0, total: info.downloadSize || 0 });
-    const result = await api.downloadUpdate({
-      downloadUrl: info.downloadUrl,
-      version: info.latestVersion,
-      downloadSize: info.downloadSize || 0,
-    });
-    if (result.ok) {
-      // main process 會在幾百毫秒後關掉程式，這裡只要讓畫面說清楚就好。
-      setRestarting(true);
-      return;
+    try {
+      const result = await api.downloadUpdate();
+      if (result.ok) {
+        // main process 會在幾百毫秒後關掉程式，這裡只要讓畫面說清楚就好。
+        setRestarting(true);
+        return;
+      }
+      setProgress(null);
+      // 自己按取消的不算錯誤，不用再嚇他一次。
+      if (!result.cancelled) setError(result.message || '更新失敗');
+    } catch (err) {
+      // invoke 本身失敗（主程序丟例外）也要收，不然進度條會永遠停在 0%。
+      setProgress(null);
+      setError(err instanceof Error ? err.message : '更新失敗');
+    } finally {
+      busyRef.current = false;
     }
-    setProgress(null);
-    setError(result.message || '更新失敗');
   };
 
   const cancel = async () => {
@@ -208,9 +222,22 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
                 </div>
               ) : null}
 
+              {info.staleRetry && (
+                <p className="text-sm text-amber-300">
+                  上一次已經下載並嘗試更新過這個版本，但重開之後版號沒有變。可能是那次換檔沒成功
+                  （檔案被佔用或被防毒擋掉），也可能是發布時版號沒更新。可以再試一次，或先到下載頁面確認。
+                </p>
+              )}
+
               {!info.canAutoUpdate && (
                 <p className="text-sm text-amber-300">
                   這個資料夾沒有寫入權限或找不到可下載的執行檔，請改用下載頁面手動更新。
+                </p>
+              )}
+
+              {info.canAutoUpdate && info.verifiable === false && (
+                <p className="text-xs text-slate-500">
+                  這個檔案沒有附雜湊值，下載後只能靠 HTTPS 保證來源，無法再比對內容。
                 </p>
               )}
             </div>

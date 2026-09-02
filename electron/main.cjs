@@ -5,10 +5,24 @@ const path = require('path');
 const APP_ICON = path.join(__dirname, '..', 'assets', 'icon.ico');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { registerUpdateHandlers } = require('./updater.cjs');
+const { registerUpdateHandlers, cleanupLeftovers, confirmBootForSwap } = require('./updater.cjs');
 
 let mainWindow = null;
 let floatingWindow = null;
+
+// 允許經 IPC 觸發的滑鼠動作。這份清單必須跟下面那段 C# DoAction 裡認得的字串一致：
+// 它是白名單，不是提示。畫面層送來的 action 會被接進 PowerShell 的 stdin，
+// 那條管線能執行任意指令，所以「不在這四個裡面」的唯一正確處理是拒絕。
+const MOUSE_ACTIONS = ['right_click_and_center', 'right_click', 'left_click_and_center', 'left_click'];
+
+/** 座標一律夾成有限整數。C# 那邊收 int，送 NaN、Infinity 或 1e21 進去只會讓整行指令失效。 */
+function safeCoord(value) {
+  const n = Math.round(Number(value));
+  if (!Number.isFinite(n)) return 0;
+  // 上限刻意設得比任何真實桌面都大（多螢幕的虛擬桌面座標可以是負的、也可以很大），
+  // 這個夾取只為了擋掉「大到會被印成科學記號」的荒謬值，不是為了限制螢幕範圍。
+  return Math.max(-1000000, Math.min(1000000, n));
+}
 
 // File path to store persistent floating window position
 const posConfigPath = path.join(app.getPath('userData'), 'floating_window_pos.json');
@@ -28,9 +42,29 @@ function saveFloatingPosition(pos) {
   } catch {}
 }
 
-// 帳號伺服器網址。打包時可以由 .env 的 VITE_API_BASE 寫進程式裡，但若同一層資料夾
-// （或使用者資料夾）放了 api-server.txt，就以檔案內容為準——換伺服器不用重新打包。
+// 帳號伺服器網址。打包時由 .env 的 VITE_API_BASE 寫進程式裡，但同一層資料夾放了
+// api-server.txt 就以檔案內容為準——換伺服器不用重新打包。
+//
+// 這個檔案決定帳號密碼會被送到哪台主機，所以它的信任邊界要講清楚：
+//   1. 只讀 exe 旁邊那一份。原本還會讀 %APPDATA%，但那是低權限程序也寫得進去的
+//      地方；exe 旁邊不是——能在那裡放檔案的人本來就能直接換掉 exe，讀它並沒有
+//      多給任何人權力。
+//   2. 只接受 https。http 等於把密碼用明文交給路徑上的每一台裝置，而且對方可以
+//      改寫回應。唯一例外是 localhost：那是自己機器上的開發伺服器，沒有網路可攔。
 const API_BASE_FILENAME = 'api-server.txt';
+
+/** https 才收；localhost 例外（本機開發用），其餘一律忽略。 */
+function isTrustedApiBase(text) {
+  try {
+    const url = new URL(text);
+    if (url.protocol === 'https:') return true;
+    if (url.protocol !== 'http:') return false;
+    const host = url.hostname.toLowerCase();
+    return host === 'localhost' || host === '127.0.0.1' || host === '[::1]' || host === '::1';
+  } catch {
+    return false;
+  }
+}
 
 function readApiBaseOverride() {
   const candidates = [];
@@ -41,18 +75,15 @@ function readApiBaseOverride() {
   try {
     candidates.push(path.join(path.dirname(app.getPath('exe')), API_BASE_FILENAME));
   } catch {}
-  try {
-    candidates.push(path.join(app.getPath('userData'), API_BASE_FILENAME));
-  } catch {}
   for (const file of candidates) {
     try {
       if (!fs.existsSync(file)) continue;
-      // 允許檔案裡有註解行（# 開頭）與空行，取第一個像網址的字串。
+      // 允許註解行（# 開頭）與空行，取第一個通得過信任檢查的網址。
       const line = fs
         .readFileSync(file, 'utf8')
         .split(/\r?\n/)
         .map((text) => text.trim())
-        .find((text) => /^https?:\/\/.+/i.test(text));
+        .find((text) => /^https?:\/\/.+/i.test(text) && isTrustedApiBase(text));
       if (line) return line.replace(/\/+$/, '');
     } catch {}
   }
@@ -500,14 +531,24 @@ function createWindow() {
     }
   });
 
-  // IPC handler for mouse right-click and center automation
+  // IPC handler for mouse right-click and center automation.
+  //
+  // 這裡的參數會被接進一段字串，然後寫進一個常駐 PowerShell 的 stdin。那條管線就是
+  // 一個「執行任意指令」的入口，所以畫面層送來的東西一個都不能直接相信：
+  //   - action 只能是 C# DoAction 真的認得的那四個字串，用白名單比對而不是過濾字元。
+  //     過濾是列舉壞東西（永遠列不完），白名單是列舉好東西（一共四個）。
+  //   - 座標必須是有限的整數。NaN／字串／Infinity 接進去會變成 PowerShell 的語法錯誤，
+  //     雖然不是注入，但會讓那條指令靜默失效，比較難查。
   ipcMain.handle('perform-mouse-action', async (event, { action, screenX, screenY, returnToCenter = true }) => {
     try {
+      if (!MOUSE_ACTIONS.includes(action)) {
+        return { success: false, error: `unsupported action: ${String(action)}` };
+      }
       if (!psProc || psProc.killed) {
         initPowerShellWorker();
       }
-      const x = Math.round(screenX || 0);
-      const y = Math.round(screenY || 0);
+      const x = safeCoord(screenX);
+      const y = safeCoord(screenY);
       const cmd = `[WinAutomation]::DoAction("${action}", ${x}, ${y}, $${returnToCenter ? 'true' : 'false'});\n`;
       psProc.stdin.write(cmd);
       return { success: true };
@@ -582,6 +623,14 @@ function createWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'), { query: rendererQuery() });
   }
 
+  // 剛換完檔的那一次啟動，換檔腳本正在等一個「我真的活起來了」的訊號，方式是等
+  // <exe>.updating 消失。放在這裡而不是 whenReady：畫面載完才表示 Chromium、asar
+  // 裡的前端、preload 這一整條都沒問題，那才是使用者要的「程式能用」。
+  // 沒在換檔的時候這個呼叫什麼事都不會發生（旗標本來就不存在）。
+  mainWindow.webContents.once('did-finish-load', () => {
+    confirmBootForSwap();
+  });
+
   mainWindow.on('closed', () => {
     mainWindow = null;
     if (floatingWindow && !floatingWindow.isDestroyed()) {
@@ -590,7 +639,34 @@ function createWindow() {
   });
 }
 
+// 免安裝版很容易被連點兩下開成兩份。單一實例鎖在這個程式裡不只是禮貌問題，而是
+// 正確性前提：
+//   1. 更新流程會在啟動時清掉 <exe>.new / .part / .old。第二個實例一開，就會把
+//      第一個正在下載的 90 MB 檔案刪掉。
+//   2. 全域熱鍵只有先註冊到的那一份收得到，兩份互搶會讓熱鍵時好時壞。
+//   3. 兩份同時驅動 PowerShell 移動滑鼠，等於兩個人搶同一支游標。
+const hasInstanceLock = app.requestSingleInstanceLock();
+if (!hasInstanceLock) {
+  app.quit();
+}
+
+// 使用者再點一次圖示的意思是「把它叫出來」，不是「再開一個」。
+app.on('second-instance', () => {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 app.whenReady().then(() => {
+  // app.quit() 不是同步的，whenReady 還是可能先跑到。沒拿到鎖的那一份只負責結束：
+  // 不要開視窗、不要註冊熱鍵，尤其不要去清任何暫存檔。
+  if (!hasInstanceLock) return;
+
+  // 上一輪沒清完的更新暫存檔（下載被中斷的 .part、沒換成功的 .new、換檔留下的
+  // .old）。放到這裡是因為有上面那把鎖，才能確定沒有另一份正在寫它們。
+  cleanupLeftovers();
   initPowerShellWorker();
   registerUpdateHandlers(ipcMain);
 

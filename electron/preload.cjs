@@ -29,9 +29,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
     return () => ipcRenderer.removeListener('floating-window-closed', listener);
   },
   // 檢查更新 / 一鍵更新。downloadUpdate 成功後程式會自己關掉再開新版。
+  // 刻意不收參數：下載網址、版號、大小、雜湊值全部由主程序自己向 GitHub 問。
+  // 下載回來的檔案會被執行，畫面層不該有任何機會影響它是從哪裡來的。
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   checkForUpdate: () => ipcRenderer.invoke('check-for-update'),
-  downloadUpdate: (params) => ipcRenderer.invoke('download-update', params),
+  downloadUpdate: () => ipcRenderer.invoke('download-update'),
   cancelUpdateDownload: () => ipcRenderer.invoke('cancel-update-download'),
   openReleasePage: (url) => ipcRenderer.invoke('open-release-page', url),
   onUpdateDownloadProgress: (callback) => {

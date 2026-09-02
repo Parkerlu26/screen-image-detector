@@ -43,6 +43,36 @@ const MAX_FIT_BIAS = 28;
 const FIT_GAIN_EPS = 0.02;
 const FIT_BIAS_EPS = 2;
 
+// ── Flat (structureless) templates ──
+//
+// ZNCC divides by the standard deviation of both sides, so a template with no
+// internal variation has nothing to correlate: every frame-side variance floor
+// (`variance <= 1`) rejects the position, and a solid-colour target — a status
+// light, a coloured banner, a filled progress bar — can never be found no matter
+// how exactly its pixels agree. Correlation is the wrong measure there, not a
+// measure to be tuned, so such subsets switch to absolute agreement: mean
+// |frame - template| in grey levels, mapped to 0..1.
+//
+// A subset counts as flat when its own standard deviation is below FLAT_STD.
+// That cut sits just above the frame-side floor (variance > 1, i.e. std > 1), so
+// a subset is called flat exactly when ZNCC could not have worked anyway.
+const FLAT_STD = 2;
+// Grey levels of mean error that take the flat score from 1 down to 0. Capture
+// of a solid area is lossless here, so a true match errs by ~0 and scores 1.0;
+// 24 still leaves room for a level or two of drift while separating two shades a
+// person can tell apart (12 levels of error scores 0.5).
+const FLAT_GRAY_TOL = 24;
+
+/** Absolute-agreement score in [0,1] from a mean grey error. */
+function flatLevelScore(meanAbs: number): number {
+  return meanAbs >= FLAT_GRAY_TOL ? 0 : 1 - meanAbs / FLAT_GRAY_TOL;
+}
+
+/** The mean grey error that `flatLevelScore` maps to exactly `score`. */
+function flatBudget(score: number): number {
+  return FLAT_GRAY_TOL * (1 - score);
+}
+
 /** Downscale factor of the coarse search pyramid level. */
 export const PYRAMID_SCALE = 4;
 
@@ -187,6 +217,32 @@ function packedZNCC(p: PackedPoints, off: Int32Array, buf: Uint8Array, base: num
   return (cross * inv - mean * p.mean) / (Math.sqrt(variance) * p.std);
 }
 
+/**
+ * Mean |frame - template| over a packed subset — the flat template's answer to
+ * `packedZNCC` — abandoned as soon as the running sum passes `sumBudget`.
+ *
+ * The early return is FLAT_GRAY_TOL, i.e. "beyond the tolerance", which is all a
+ * caller comparing the score against a cut can act on. Bounding the loop this way
+ * is what keeps a flat sweep affordable: a position over a differently-coloured
+ * part of the screen is abandoned after two or three points.
+ */
+function packedMeanAbs(
+  p: PackedPoints,
+  off: Int32Array,
+  buf: Uint8Array,
+  base: number,
+  sumBudget: number
+): number {
+  const { count, lum } = p;
+  let acc = 0;
+  for (let i = 0; i < count; i++) {
+    const d = buf[base + off[i]] - lum[i];
+    acc += d < 0 ? -d : d;
+    if (acc > sumBudget) return FLAT_GRAY_TOL;
+  }
+  return acc / count;
+}
+
 export interface PreprocessedTemplate {
   targetId: string;
   width: number;
@@ -208,10 +264,24 @@ export interface PreprocessedTemplate {
   coarseSamples: SamplePoint[];
   coarseMean: number;
   coarseStd: number;
+  // ── Flatness of each ZNCC denominator (see FLAT_STD) ──
+  // Recorded per subset rather than per template: a mostly-uniform icon can have
+  // a degenerate 8-point coarse subset while its 64-point grid still carries real
+  // structure, and only the subset that has nothing to correlate should switch
+  // measure — swapping the 64-point score for absolute agreement as well would
+  // dilute that structure across 64 samples.
+  flatCoarse: boolean;
+  flatMid: boolean;
+  flatFull: boolean;
   // ── Pyramid level (1/PYRAMID_SCALE resolution, box-averaged) ──
   // Box averaging is what makes the coarse pass usable on pixel-detail icons:
   // a single-pixel sample stops correlating a few pixels off the true position,
   // a 4x4 average still does. Search here is dense, so nothing is skipped.
+  // The lattices below hold the same plain box average the frame side computes,
+  // over interior blocks plus the boundary blocks that carry the target's only
+  // structure, so that a target which is not aligned to the screen's block grid
+  // still reads close to what the template stored — see the construction in
+  // `prepareTemplate` for why each part is needed.
   pyrWidth: number;
   pyrHeight: number;
   pyrCoarse: PackedPoints | null;
@@ -221,6 +291,25 @@ export interface PreprocessedTemplate {
   /** Chromaticity (0..255) of each pyrMid point's block, for colour-aware ranking. */
   pyrMidCr: Float64Array | null;
   pyrMidCg: Float64Array | null;
+  // ── Flatness of each pyramid lattice ──
+  // Recorded per lattice for the same reason as the full-res subsets above, and
+  // it matters more here: the pyramid decides *which* positions Stage 2 ever
+  // looks at. A mostly-uniform icon often has a degenerate 4-point coarse lattice
+  // while its 42-point mid lattice still sees the one feature that identifies it.
+  // Ranking that target on absolute agreement — as a single template-wide flag
+  // would — makes every uniform patch of the same shade score a perfect 1.0,
+  // while the true position, whose feature is a level *mismatch*, ranks below all
+  // of them and gets crowded out of the 24 candidate slots. Per lattice, the
+  // feature keeps its vote.
+  flatPyrCoarse: boolean;
+  flatPyrGate: boolean;
+  flatPyrMid: boolean;
+  /**
+   * Any lattice degenerate. Only used to keep such a target off the GPU: the
+   * shaders implement the ZNCC cascade and nothing else, so a flat lattice there
+   * returns an empty candidate list instead of a match.
+   */
+  flatPyr: boolean;
 }
 
 const templateCache = new Map<string, PreprocessedTemplate>();
@@ -262,6 +351,65 @@ export function ageAdaptiveRoi(targetId: string): void {
       lastFoundCache.delete(targetId);
     }
   }
+}
+
+/** Allowed top-left range along one axis, or null when no position fits. */
+function roiSpan(
+  start: number,
+  size: number,
+  t: number,
+  frame: number
+): { lo: number; hi: number } | null {
+  if (!Number.isFinite(start) || !Number.isFinite(size)) return null;
+  const limit = frame - t;
+  if (limit < 0) return null;
+  const a = Math.floor(start);
+  const b = Math.floor(start + size) - t;
+  let lo = a < b ? a : b;
+  let hi = a < b ? b : a;
+  if (lo < 0) lo = 0;
+  if (hi > limit) hi = limit;
+  return lo <= hi ? { lo, hi } : null;
+}
+
+/**
+ * Turn a user-drawn ROI into the rectangle a search should bound itself to, in
+ * frame pixels.
+ *
+ * "The thing is around here" is all an ROI ever says. When the box is larger than
+ * the template, that reads as *the template lies inside the box* — what the search
+ * has always assumed. When the user drew a box smaller than the template (a corner
+ * of the button, a sloppy drag, or a template later replaced by a bigger one) the
+ * same reading collapses to a single legal position, and every caller used to
+ * disagree about what to do with it: score 0 here, a silent full-screen search
+ * there, the target dropped from the results entirely in the third. The mirror
+ * reading is the sensible one: *the template covers the box*.
+ *
+ * Both are the same statement — the smaller rectangle lies inside the bigger one —
+ * so one formula covers both: the template's top-left may sit anywhere between
+ * `roi.x` and `roi.x + roi.width - tWidth`, whichever way round those two happen
+ * to be, clamped to the frame. For an ROI larger than the template that is exactly
+ * the old range, so nothing about existing ROIs changes.
+ *
+ * @returns the rectangle to search, or null when not one position fits (a template
+ * bigger than the frame, or an ROI that lies outside it).
+ */
+export function normalizeRoi(
+  roi: Rect,
+  tWidth: number,
+  tHeight: number,
+  frameWidth: number,
+  frameHeight: number
+): Rect | null {
+  const xs = roiSpan(roi.x, roi.width, tWidth, frameWidth);
+  const ys = roiSpan(roi.y, roi.height, tHeight, frameHeight);
+  if (!xs || !ys) return null;
+  return {
+    x: xs.lo,
+    y: ys.lo,
+    width: xs.hi - xs.lo + tWidth,
+    height: ys.hi - ys.lo + tHeight,
+  };
 }
 
 // ── Template Preprocessing ──
@@ -344,7 +492,6 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
   // ── Full 64-point sampling grid (8x8) ──
   const samples: SamplePoint[] = [];
   const gridCount = 8;
-  let sSum = 0;
   let totalW = 0;
 
   for (let gy = 0; gy < gridCount; gy++) {
@@ -355,7 +502,6 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
       const lum = gray[idx];
       const isCenter = gx >= 2 && gx <= 5 && gy >= 2 && gy <= 5;
       const weight = isCenter ? 1.4 : 1.0;
-      sSum += lum;
       totalW += weight;
       const sr = data[idx * 4];
       const sg = data[idx * 4 + 1];
@@ -376,13 +522,95 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
   }
 
   const sampleCount = samples.length;
-  const sampleMean = sSum / sampleCount;
-  let sVarSum = 0;
-  for (let i = 0; i < sampleCount; i++) {
-    const d = samples[i].lum - sampleMean;
-    sVarSum += d * d;
+  let sampleMean = 0;
+  let sampleStd = 0;
+  const restat = () => {
+    let s = 0;
+    for (let i = 0; i < sampleCount; i++) s += samples[i].lum;
+    sampleMean = s / sampleCount;
+    let v = 0;
+    for (let i = 0; i < sampleCount; i++) {
+      const d = samples[i].lum - sampleMean;
+      v += d * d;
+    }
+    sampleStd = Math.sqrt(v / sampleCount) || 1e-4;
+  };
+  restat();
+
+  // ── When the grid misses the target's only structure, move a few points onto it ──
+  // The 64 points exist to bound what a full score costs; where they sit is free to
+  // choose here. An even grid is the right default — regular coverage is what keeps
+  // the score from collapsing when the position is a pixel off — but a grid that
+  // samples nothing distinctive is strictly worse than one that does: it reports "no
+  // variance" for a template that plainly has some, and the score then falls to the
+  // absolute-agreement path, where every patch of the target's background shade
+  // scores a perfect 1.0. Measured on 28x22 grey templates carrying one 3x3 dark
+  // block: 53 of the 520 placements slipped between the grid lines and matched plain
+  // background. So when the grid is flat and the whole template is not, relocate a
+  // few points onto the pixels that deviate most from the template mean, each taking
+  // over the nearest grid point so that the coverage given up is only local.
+  if (sampleStd < FLAT_STD && stdDev >= FLAT_STD) {
+    const MOVES = 4;
+    const MIN_SEP = 2;
+    const pickX: number[] = [];
+    const pickY: number[] = [];
+    const moved = new Uint8Array(sampleCount);
+    for (let k = 0; k < MOVES; k++) {
+      let bestIdx = -1;
+      let bestDev = FLAT_STD;
+      for (let i = 0; i < n; i++) {
+        const dev = Math.abs(gray[i] - mean);
+        if (dev <= bestDev) continue;
+        const px = i % w;
+        const py = (i / w) | 0;
+        let tooClose = false;
+        for (let j = 0; j < pickX.length; j++) {
+          if (Math.abs(pickX[j] - px) < MIN_SEP && Math.abs(pickY[j] - py) < MIN_SEP) {
+            tooClose = true;
+            break;
+          }
+        }
+        if (tooClose) continue;
+        bestDev = dev;
+        bestIdx = i;
+      }
+      if (bestIdx < 0) break;
+      const px = bestIdx % w;
+      const py = (bestIdx / w) | 0;
+      pickX.push(px);
+      pickY.push(py);
+      // The nearest point not already moved: whatever it was covering is still
+      // covered by a point a few pixels away.
+      let slot = -1;
+      let bestD2 = Infinity;
+      for (let i = 0; i < sampleCount; i++) {
+        if (moved[i]) continue;
+        const dx = samples[i].x - px;
+        const dy = samples[i].y - py;
+        const d2 = dx * dx + dy * dy;
+        if (d2 < bestD2) {
+          bestD2 = d2;
+          slot = i;
+        }
+      }
+      if (slot < 0) break;
+      moved[slot] = 1;
+      const sr = data[bestIdx * 4];
+      const sg = data[bestIdx * 4 + 1];
+      const sb = data[bestIdx * 4 + 2];
+      const sTotal = sr + sg + sb + 1;
+      const p = samples[slot];
+      p.x = px;
+      p.y = py;
+      p.lum = gray[bestIdx];
+      p.r = sr;
+      p.g = sg;
+      p.b = sb;
+      p.cr = sr / sTotal;
+      p.cg = sg / sTotal;
+    }
+    restat();
   }
-  const sampleStd = Math.sqrt(sVarSum / sampleCount) || 1e-4;
 
   // ── Subset statistics helper ──
   const subsetStats = (indices: number[]) => {
@@ -422,10 +650,41 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
   ];
   const coarse = subsetStats(coarseIndices);
 
-  // ── Pyramid level: box-average the template down by PYRAMID_SCALE ──
-  // Blocks are aligned to the same lattice the frame pyramid uses, so a template
-  // whose top-left lands on a multiple of PYRAMID_SCALE correlates exactly, and
-  // the intermediate phases degrade smoothly instead of falling off a cliff.
+  // ── Pyramid level: sample the template at 1/PYRAMID_SCALE resolution ──
+  // The frame side is a plain SxS box average on a lattice fixed to the screen, so
+  // a target whose top-left is not a multiple of S is never read the way an
+  // S-aligned template was written. Two separate things follow from that, and only
+  // one of them is fixable here.
+  //
+  // Fixable: *which* blocks are sampled. The outer ring is part target, part
+  // whatever sits next to it on screen, and the lattices below are deduplicated
+  // onto the pyramid grid, so on a small template they used to hit every block —
+  // 20 of a 28x22 template's 35 are in that ring. For a low-contrast target the
+  // neighbourhood leaking in outweighs the structure being matched: measured, a
+  // 28x22 template carrying one low-contrast blob was acquired at 3 of the 16
+  // sub-block offsets when the ring was sampled and at 16 of 16 when it is not.
+  // So only interior blocks are sampled — the ones a shift of up to S-1 pixels
+  // cannot drag outside the target. Interior block bx spans pixels
+  // [S*bx-(S-1), S*bx+(S-1)] for bx in 1..pyrWidth-2, always inside the template:
+  // no edge clamping, no invented samples. The cost is real and documented: a
+  // feature that exists only in the outermost S-1 pixels no longer contributes to
+  // ranking (a high-contrast 28x22 icon went 15/16 -> 13/16 sub-block offsets on
+  // an isolated-target probe), and when dropping the ring leaves a lattice with no
+  // variance at all, `pyramidCanRank`/`rankOnFull` route the target to the
+  // full-resolution grid instead.
+  //
+  // Not fixable here: *what* an interior block holds. At a non-zero phase a
+  // position reads the template's own pixels slid by 0..S-1, so no stored value is
+  // right for every phase. Pre-averaging the S slides — a separable 1-2-3-4-3-2-1
+  // kernel over the 2S-1 pixels centred on the block — looks like the way to be
+  // wrong by the least, and it is a mistake: it makes the two sides of the
+  // correlation different functions of their pixels. Measured, the smoothed
+  // template ranked 0.418 at the true position of a 28x22 icon *at phase (0,0)*,
+  // with 2180 frame positions above it, and the accuracy floor fell from 48/48 to
+  // 44/48. Storing the same plain box mean the frame stores restores 48/48 with 0
+  // of 42 decoys (worst 0.076) and leaves the phase error where it belongs: as a
+  // spread in rank at the true position (0.415..0.992 over the 16 offsets), which
+  // costs candidate slots, not correctness — Stage 2 still scores pixel-exact.
   const S = PYRAMID_SCALE;
   const pyrWidth = Math.floor(w / S);
   const pyrHeight = Math.floor(h / S);
@@ -435,37 +694,93 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
   let pyrMidCr: Float64Array | null = null;
   let pyrMidCg: Float64Array | null = null;
 
-  if (pyrWidth >= 2 && pyrHeight >= 2) {
-    const pyr = new Uint8Array(pyrWidth * pyrHeight);
-    // Block-mean chromaticity, so the ranking pass can tell a same-shape
+  // At least a 2x2 interior, so anything under 4*S px in either axis is searched
+  // at full resolution instead. Nothing else needs to know: every stage already
+  // reads a missing lattice as "no pyramid for this target".
+  if (pyrWidth >= 4 && pyrHeight >= 4) {
+    const iw = pyrWidth - 2;
+    const ih = pyrHeight - 2;
+
+    // Block values, memoised: the three lattices overlap heavily and each point
+    // costs S*S taps.
+    const cells = pyrWidth * pyrHeight;
+    const cellLum = new Float64Array(cells);
+    // Block chromaticity, so the ranking pass can tell a same-shape
     // different-colour lookalike apart. Without it the ranking is luminance-only
     // and a recoloured copy of the icon ranks exactly as high as the real one.
-    const pyrCr = new Uint8Array(pyrWidth * pyrHeight);
-    const pyrCg = new Uint8Array(pyrWidth * pyrHeight);
-    const inv = 1 / (S * S);
-    for (let py = 0; py < pyrHeight; py++) {
-      for (let px = 0; px < pyrWidth; px++) {
-        let acc = 0;
-        let accR = 0;
-        let accG = 0;
-        let accB = 0;
-        for (let dy = 0; dy < S; dy++) {
-          const row = (py * S + dy) * w + px * S;
-          for (let dx = 0; dx < S; dx++) {
-            acc += gray[row + dx];
-            const i4 = (row + dx) << 2;
-            accR += data[i4];
-            accG += data[i4 + 1];
-            accB += data[i4 + 2];
-          }
+    const cellCr = new Float64Array(cells);
+    const cellCg = new Float64Array(cells);
+    const cellDone = new Uint8Array(cells);
+    const cellAt = (bx: number, by: number): number => {
+      const idx = by * pyrWidth + bx;
+      if (cellDone[idx]) return idx;
+      let acc = 0;
+      let accR = 0;
+      let accG = 0;
+      let accB = 0;
+      for (let ky = 0; ky < S; ky++) {
+        const row = (by * S + ky) * w + bx * S;
+        for (let kx = 0; kx < S; kx++) {
+          const i = row + kx;
+          acc += gray[i];
+          const i4 = i << 2;
+          accR += data[i4];
+          accG += data[i4 + 1];
+          accB += data[i4 + 2];
         }
-        const idx = py * pyrWidth + px;
-        pyr[idx] = Math.round(acc * inv);
-        const tot = accR + accG + accB + 1;
-        pyrCr[idx] = Math.round((accR / tot) * 255);
-        pyrCg[idx] = Math.round((accG / tot) * 255);
       }
-    }
+      // Same sums over the same S*S pixels the frame side accumulates, so the
+      // frame's "+1" divide-by-zero guard carries over unscaled.
+      const tot = accR + accG + accB + 1;
+      cellLum[idx] = acc / (S * S);
+      cellCr[idx] = (accR / tot) * 255;
+      cellCg[idx] = (accG / tot) * 255;
+      cellDone[idx] = 1;
+      return idx;
+    };
+
+    // The interior lattice: the points whose value a misaligned position still
+    // reads off the target's own pixels, whatever sits next to it on screen.
+    const interior = (G: number): GrayPoint[] => {
+      const pts: GrayPoint[] = [];
+      const seen = new Set<number>();
+      for (let gy = 0; gy < G; gy++) {
+        const py = 1 + Math.min(ih - 1, Math.floor(((gy + 0.5) / G) * ih));
+        for (let gx = 0; gx < G; gx++) {
+          const px = 1 + Math.min(iw - 1, Math.floor(((gx + 0.5) / G) * iw));
+          const idx = cellAt(px, py);
+          if (seen.has(idx)) continue;
+          seen.add(idx);
+          pts.push({ x: px, y: py, lum: cellLum[idx] });
+        }
+      }
+      return pts;
+    };
+
+    // ── Which boundary blocks are worth their contamination ──
+    // A block on the target's boundary is read, at a non-zero phase, as a mix of
+    // the target and up to 3/4 of whatever the target happens to be sitting on.
+    // That is not a reason to drop them all: measured at 1920x1080 over the 16
+    // sub-block offsets, keeping them is what lets a 28x22 pixel-detail icon be
+    // acquired at every offset (16/16 with them, 8/16 without), because 35 points
+    // are far harder for background to imitate than 15. It is a reason to drop the
+    // ones that carry nothing: on a 28x22 template whose only feature is a
+    // low-contrast interior blob, the boundary blocks all hold the same background
+    // shade, so on the template side they add no signal at all while on the frame
+    // side they add the neighbourhood's spread — acquired at 3 of 16 offsets with
+    // them, 16 of 16 without.
+    //
+    // So a boundary block is kept when its own value stands out from the interior
+    // lattice by more than that lattice's spread: further than one standard
+    // deviation is more signal than the band it perturbs, inside it is the
+    // neighbourhood's content wearing the target's mean.
+    const ref = interior(8);
+    let refMean = 0;
+    for (const p of ref) refMean += p.lum;
+    refMean /= ref.length || 1;
+    let refVar = 0;
+    for (const p of ref) refVar += (p.lum - refMean) * (p.lum - refMean);
+    const refStd = Math.sqrt(refVar / (ref.length || 1));
 
     const lattice = (G: number): GrayPoint[] => {
       const pts: GrayPoint[] = [];
@@ -474,10 +789,12 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
         const py = Math.min(pyrHeight - 1, Math.floor(((gy + 0.5) / G) * pyrHeight));
         for (let gx = 0; gx < G; gx++) {
           const px = Math.min(pyrWidth - 1, Math.floor(((gx + 0.5) / G) * pyrWidth));
-          const idx = py * pyrWidth + px;
+          const idx = cellAt(px, py);
           if (seen.has(idx)) continue;
+          const onBoundary = px === 0 || py === 0 || px === pyrWidth - 1 || py === pyrHeight - 1;
+          if (onBoundary && !(Math.abs(cellLum[idx] - refMean) > refStd)) continue;
           seen.add(idx);
-          pts.push({ x: px, y: py, lum: pyr[idx] });
+          pts.push({ x: px, y: py, lum: cellLum[idx] });
         }
       }
       return pts;
@@ -488,14 +805,14 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
     pyrMidCg = new Float64Array(midPts.length);
     for (let i = 0; i < midPts.length; i++) {
       const idx = midPts[i].y * pyrWidth + midPts[i].x;
-      pyrMidCr[i] = pyrCr[idx];
-      pyrMidCg[i] = pyrCg[idx];
+      pyrMidCr[i] = cellCr[idx];
+      pyrMidCg[i] = cellCg[idx];
     }
     // ~9 points, spatially spread — the gate every frame position pays for.
     const gatePts = lattice(5);
-    pyrGate = packPoints(gatePts.length >= 9 ? gatePts : lattice(8));
+    pyrGate = packPoints(gatePts.length >= 9 ? gatePts : midPts);
     const coarsePts = lattice(3);
-    pyrCoarse = packPoints(coarsePts.length >= 4 ? coarsePts : lattice(8));
+    pyrCoarse = packPoints(coarsePts.length >= 4 ? coarsePts : midPts);
   }
 
   const preprocessed: PreprocessedTemplate = {
@@ -516,6 +833,9 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
     coarseSamples: coarse.pts,
     coarseMean: coarse.mean,
     coarseStd: coarse.std,
+    flatCoarse: coarse.std < FLAT_STD,
+    flatMid: mid.std < FLAT_STD,
+    flatFull: sampleStd < FLAT_STD,
     pyrWidth,
     pyrHeight,
     pyrCoarse,
@@ -523,6 +843,16 @@ export async function prepareTemplate(target: Target): Promise<PreprocessedTempl
     pyrMid,
     pyrMidCr,
     pyrMidCg,
+    // Each lattice answers for itself; `flatPyr` is only the "keep off the GPU"
+    // summary. A missing lattice counts as flat so no stage tries to correlate it.
+    flatPyrCoarse: !pyrCoarse || pyrCoarse.std < FLAT_STD,
+    flatPyrGate: !pyrGate || pyrGate.std < FLAT_STD,
+    flatPyrMid: !pyrMid || pyrMid.std < FLAT_STD,
+    flatPyr:
+      !!pyrMid &&
+      !!pyrGate &&
+      !!pyrCoarse &&
+      (pyrMid.std < FLAT_STD || pyrGate.std < FLAT_STD || pyrCoarse.std < FLAT_STD),
   };
   templateCache.set(cacheKey, preprocessed);
   return preprocessed;
@@ -607,12 +937,48 @@ export function getOrComputeFramePyramid(
 }
 
 /**
+ * Can the pyramid rank this target at all?
+ *
+ * The pyramid pass does one job: order positions so that the ~24 which reach the
+ * pixel-exact stage include the true one. A template whose mid lattice — the
+ * lattice the rank is read from — has no variance carries no order to give: on
+ * absolute agreement every patch of the same shade scores a perfect 1.0, so the
+ * true position is no likelier to keep a candidate slot than the hundreds of ties
+ * around it, and the cap decides by scan order instead of by evidence.
+ *
+ * Two cases hide behind a flat mid lattice, and they want opposite things:
+ *
+ *   - The target really is one shade (`flatFull` too). Then the ties are not
+ *     noise: every patch of that shade *is* an equally good answer, the
+ *     pixel-exact stage confirms whichever position is offered, and the pyramid
+ *     stays — it is 16x cheaper than a strided full-resolution pass.
+ *   - The target has structure that only the full-resolution grid can see, either
+ *     because it is finer than a 4x4 block average or because it lives in the
+ *     outermost ring of blocks the lattices do not sample (see `prepareTemplate`
+ *     for why they cannot). `flatFull` is false, and the strided pass — which can
+ *     rank on that same 64-point grid — is the one able to find it. Worth its
+ *     extra cost for a target that would otherwise be lost the moment a patch of
+ *     its background shade shares the screen.
+ *
+ * So: keep the pyramid unless it is blind to structure the full-resolution grid
+ * still holds.
+ */
+export function pyramidCanRank(t: PreprocessedTemplate): boolean {
+  return !t.flatPyrMid || t.flatFull;
+}
+
+/**
  * The sweep's own ranking score for one pyramid position: the 64-point mid ZNCC
  * times the chromaticity factor.
  *
  * This exists for the GPU self-test. The shader has to reproduce this number, and
  * the only honest way to check that is to compare it against the very code the
  * CPU sweep runs — a re-implementation in the test would be free to drift.
+ *
+ * A template whose mid lattice is flat is ranked on absolute agreement instead,
+ * exactly as the sweep does. Those targets never reach the GPU (`GpuSweeper`
+ * filters out every flat lattice, precisely because the shader has no flat path),
+ * so this branch only keeps the function honest about being "the sweep's score".
  */
 export function pyramidRankScore(
   template: PreprocessedTemplate,
@@ -625,7 +991,9 @@ export function pyramidRankScore(
   if (!mid) return 0;
   const off = offsetsFor(mid, pyr.width);
   const base = py * pyr.width + px;
-  const midScore = packedZNCC(mid, off, pyr.data, base);
+  const midScore = template.flatPyrMid
+    ? flatLevelScore(packedMeanAbs(mid, off, pyr.data, base, Infinity))
+    : packedZNCC(mid, off, pyr.data, base);
   const tplCr = template.pyrMidCr;
   const tplCg = template.pyrMidCg;
   if (!useColor || !tplCr || !tplCg) return midScore;
@@ -903,6 +1271,89 @@ function computeSparseZNCC(
 }
 
 /**
+ * Mean |frame - template| over an arbitrary sample subset — what a flat subset
+ * uses in place of `computeSparseZNCC`. Only 8 or 16 points wide, so unlike the
+ * pyramid version it is not worth abandoning early.
+ */
+function sparseMeanAbs(
+  pts: GrayPoint[],
+  count: number,
+  frameGray: Uint8Array,
+  rowOffset: number,
+  x: number,
+  frameWidth: number
+): number {
+  let acc = 0;
+  for (let i = 0; i < count; i++) {
+    const s = pts[i];
+    const d = frameGray[rowOffset + s.y * frameWidth + x + s.x] - s.lum;
+    acc += d < 0 ? -d : d;
+  }
+  return acc / count;
+}
+
+/**
+ * Pixel-exact score for a template whose 64 samples carry no variance.
+ *
+ * There is exactly one piece of evidence about such a window: whether it is the
+ * same colour as the template. So the shape term becomes absolute agreement in
+ * grey levels, and the existing colour multiplier does the rest. Unlike the
+ * correlated path there is deliberately no gain+bias hypothesis: with no variance
+ * to pin them down, a gain and a bias can map any solid colour onto any other, so
+ * fitting here would explain away the only evidence there is.
+ */
+function computeFlatScore(
+  samples: SamplePoint[],
+  numSamples: number,
+  frameGray: Uint8Array | null,
+  framePixels: Uint8ClampedArray,
+  rowOffset: number,
+  x: number,
+  frameWidth: number,
+  useColor: boolean,
+  bestSoFar: number
+): number {
+  let absDiff = 0;
+  if (frameGray) {
+    for (let i = 0; i < numSamples; i++) {
+      const s = samples[i];
+      const d = frameGray[rowOffset + s.y * frameWidth + x + s.x] - s.lum;
+      absDiff += d < 0 ? -d : d;
+    }
+  } else {
+    // No luminance plane (the GPU refinement path): derive it exactly as
+    // `computeFramePlanes` would, from pixels this loop reads anyway.
+    for (let i = 0; i < numSamples; i++) {
+      const s = samples[i];
+      const fi = (rowOffset + s.y * frameWidth + x + s.x) << 2;
+      const fl = (framePixels[fi] * 77 + framePixels[fi + 1] * 150 + framePixels[fi + 2] * 29) >> 8;
+      const d = fl - s.lum;
+      absDiff += d < 0 ? -d : d;
+    }
+  }
+
+  const level = flatLevelScore(absDiff / numSamples);
+  if (!useColor || level <= 0) return level;
+  // Exactly the bound the correlated path uses: colour is a multiplier of at
+  // most 1, so this position cannot win and the colour pass can be skipped.
+  if (level <= bestSoFar) return -1;
+
+  let chromaDiff = 0;
+  let intensityDiff = 0;
+  for (let i = 0; i < numSamples; i++) {
+    const s = samples[i];
+    const fi = (rowOffset + s.y * frameWidth + x + s.x) << 2;
+    const fr = framePixels[fi];
+    const fg = framePixels[fi + 1];
+    const fb = framePixels[fi + 2];
+    const fTotal = fr + fg + fb + 1;
+    chromaDiff += Math.abs(fr / fTotal - s.cr) + Math.abs(fg / fTotal - s.cg);
+    intensityDiff += Math.abs(fr - s.r) + Math.abs(fg - s.g) + Math.abs(fb - s.b);
+  }
+  return level * colorFactor(chromaDiff, intensityDiff, numSamples);
+}
+
+/**
  * Full 64-point ZNCC + Soft Color Consistency Scoring.
  *
  * `bestSoFar` lets the colour half be skipped whenever it cannot possibly
@@ -910,6 +1361,11 @@ function computeSparseZNCC(
  * is at most 1, so `zncc*0.72 + 0.28 <= bestSoFar` proves this position loses.
  * The colour pass is three extra absolute differences per sample, so skipping
  * it on the (vast) majority of losing positions is most of the speedup.
+ *
+ * `flat` switches the shape term from correlation to absolute agreement, for the
+ * templates whose 64 samples carry no variance at all (see FLAT_STD). Everything
+ * after it — the colour multiplier, the `bestSoFar` bound, the 0..1 range — keeps
+ * its meaning, so a threshold means the same thing for both kinds of target.
  */
 function computeFullScore(
   samples: SamplePoint[],
@@ -922,8 +1378,23 @@ function computeFullScore(
   x: number,
   frameWidth: number,
   useColor: boolean,
-  bestSoFar: number
+  bestSoFar: number,
+  flat: boolean
 ): number {
+  if (flat) {
+    return computeFlatScore(
+      samples,
+      numSamples,
+      frameGray,
+      framePixels,
+      rowOffset,
+      x,
+      frameWidth,
+      useColor,
+      bestSoFar
+    );
+  }
+
   let subSum = 0;
   let subSumSq = 0;
   let cross = 0;
@@ -1020,26 +1491,38 @@ function computeFullScore(
       fitIntensityDiff += Math.abs(fr - mr) + Math.abs(fg - mg) + Math.abs(fb - mb);
     }
   }
-  if (useFit) {
-    if (fitChromaDiff < chromaDiff) chromaDiff = fitChromaDiff;
-    if (fitIntensityDiff < intensityDiff) intensityDiff = fitIntensityDiff;
-  }
-
-  // Both halves have a dead zone first. A screen capture is never pixel-exact -
-  // scaling, colour conversion and compression shift values a little - and
-  // charging the score for that noise measured as 24/48 detections lost with hit
-  // scores barely over threshold. Beyond the dead zone the penalty is steep, so a
-  // genuinely different hue still collapses to zero.
-  const meanChroma = chromaDiff / numSamples;
-  const hueExcess = meanChroma - CHROMA_TOLERANCE;
-  const hueScore = hueExcess <= 0 ? 1 : 1 - hueExcess * COLOR_SHARPNESS;
-  if (hueScore <= 0) return 0;
-  const meanIntensity = intensityDiff / (numSamples * 765);
-  const levelExcess = meanIntensity - LEVEL_TOLERANCE;
-  const levelScore = levelExcess <= 0 ? 1 : 1 - levelExcess * LEVEL_SHARPNESS;
-  const colorScore = hueScore * (levelScore > 0 ? levelScore : 0);
+  // There are exactly two hypotheses about this window: it is the template, or it
+  // is the template seen through one gain+bias. Each has to be scored as a whole.
+  // Taking the minimum of each *term* separately would allow a third, physically
+  // meaningless combination - hue judged on the raw template, brightness judged on
+  // the fitted one - which scores better than either real hypothesis. Measured
+  // cost of that hybrid: a wrong-hue decoy under a brightness shift went 0.046 ->
+  // 0.345 and a washed-out lookalike 0.002 -> 0.288. So score both hypotheses
+  // completely and keep the better one.
+  const plainColor = colorFactor(chromaDiff, intensityDiff, numSamples);
+  const colorScore = useFit
+    ? Math.max(plainColor, colorFactor(fitChromaDiff, fitIntensityDiff, numSamples))
+    : plainColor;
 
   return rawScore * colorScore;
+}
+
+/**
+ * Colour agreement of one hypothesis, in [0,1], as a multiplier on the ZNCC.
+ *
+ * Both halves have a dead zone first. A screen capture is never pixel-exact -
+ * scaling, colour conversion and compression shift values a little - and charging
+ * the score for that noise measured as 24/48 detections lost with hit scores
+ * barely over threshold. Beyond the dead zone the penalty is steep, so a genuinely
+ * different hue still collapses to zero.
+ */
+function colorFactor(chromaDiff: number, intensityDiff: number, numSamples: number): number {
+  const hueExcess = chromaDiff / numSamples - CHROMA_TOLERANCE;
+  const hueScore = hueExcess <= 0 ? 1 : 1 - hueExcess * COLOR_SHARPNESS;
+  if (hueScore <= 0) return 0;
+  const levelExcess = intensityDiff / (numSamples * 765) - LEVEL_TOLERANCE;
+  const levelScore = levelExcess <= 0 ? 1 : 1 - levelExcess * LEVEL_SHARPNESS;
+  return levelScore > 0 ? hueScore * levelScore : 0;
 }
 
 // ── Main Entry Point ──
@@ -1241,10 +1724,18 @@ function scanRegion(
   let maxY = frameHeight - tHeight;
 
   if (roi) {
-    minX = Math.max(0, Math.min(frameWidth - tWidth, Math.floor(roi.x)));
-    minY = Math.max(0, Math.min(frameHeight - tHeight, Math.floor(roi.y)));
-    maxX = Math.max(minX, Math.min(frameWidth - tWidth, Math.floor(roi.x + roi.width - tWidth)));
-    maxY = Math.max(minY, Math.min(frameHeight - tHeight, Math.floor(roi.y + roi.height - tHeight)));
+    // One place decides what an ROI means, so a small box can never turn into a
+    // full-frame search or a single clamped position. Idempotent, so callers that
+    // already normalized (both workers do, to reason about their own bounds) pay
+    // nothing and cannot disagree with this.
+    const bounded = normalizeRoi(roi, tWidth, tHeight, frameWidth, frameHeight);
+    if (!bounded) {
+      return { score: 0, box: { x: 0, y: 0, width: tWidth, height: tHeight } };
+    }
+    minX = bounded.x;
+    minY = bounded.y;
+    maxX = bounded.x + bounded.width - tWidth;
+    maxY = bounded.y + bounded.height - tHeight;
   }
 
   const searchWidth = maxX - minX + 1;
@@ -1283,6 +1774,15 @@ function scanRegion(
   const midGate = Math.min(0.45, accept * 0.5);
   const coarseGate = Math.min(0.35, accept * 0.4);
 
+  // Rank the strided sweep on the 64-point grid instead of the 16-point lattice
+  // when the 16-point lattice has no variance but the 64-point grid does — a
+  // target whose only structure is too fine, or too close to its own edge, for the
+  // coarser subsets to sample. Ranking such a target on absolute agreement ties
+  // every patch of its background shade at 1.0, and 24 slots filled by scan order
+  // then decide the detection. The extra reads are paid only by positions that
+  // already cleared both gates.
+  const rankOnFull = template.flatMid && !template.flatFull;
+
   let bestScore = -1;
   let bestX = minX;
   let bestY = minY;
@@ -1300,7 +1800,8 @@ function scanRegion(
       x,
       frameWidth,
       useColor,
-      bestScore
+      bestScore,
+      template.flatFull
     );
     if (score > bestScore) {
       bestScore = score;
@@ -1316,7 +1817,16 @@ function scanRegion(
       for (let x = minX; x <= maxX; x++) {
         // Cheap gate first: without it a ±48px adaptive window costs ~14k full
         // colour scores per target per frame.
-        if (
+        if (template.flatCoarse) {
+          // A flat coarse subset has no variance to correlate, so the gate is the
+          // same absolute-agreement test the score uses, at the same threshold.
+          if (
+            sparseMeanAbs(coarseSamples, 8, frameGray, rowOffset, x, frameWidth) >
+            flatBudget(coarseGate)
+          ) {
+            continue;
+          }
+        } else if (
           computeSparseZNCC(
             coarseSamples,
             8,
@@ -1387,18 +1897,15 @@ function scanRegion(
   // strided search at full resolution: it visits 16x fewer positions than a
   // stride-1 sweep yet, because each pyramid pixel is a 4x4 average, it cannot
   // slip between the features of a pixel-detail icon the way a strided
-  // single-pixel sample grid does.
+  // single-pixel sample grid does. The exceptions are targets too small for a
+  // lattice and targets the pyramid cannot rank (`pyramidCanRank`); both fall
+  // through to the strided pass below.
   const S = PYRAMID_SCALE;
   const pyrCoarse = template.pyrCoarse;
   const pyrGate = template.pyrGate;
   const pyrMid = template.pyrMid;
   const pyr =
-    !presetCandidates &&
-    pyrCoarse &&
-    pyrGate &&
-    pyrMid &&
-    template.pyrWidth >= 2 &&
-    template.pyrHeight >= 2
+    !presetCandidates && pyrCoarse && pyrGate && pyrMid && pyramidCanRank(template)
       ? getOrComputeFramePyramid(_frameData, frameGray, frameWidth, frameHeight)
       : null;
 
@@ -1460,92 +1967,174 @@ function scanRegion(
     const pMaxX = Math.min(pw - template.pyrWidth, Math.floor(maxX / S));
     const pMaxY = Math.min(pyr.height - template.pyrHeight, Math.floor(maxY / S));
 
-    // Ranking a position used to jump straight from the 9-point gate to the
-    // 64-point mid score, and the ~10% of positions that pass the gate made that
-    // 64-point pass the single most expensive stage of the sweep. A 25-point
-    // intermediate gate rejects most of them for a third of the work.
+    // Each lattice decides its own measure (see `flatPyrCoarse`). The cascade
+    // shape is unchanged — row-streamed gate on the ~4-point coarse lattice, then
+    // the 9-point gate, then the mid lattice as the rank — and the choice of
+    // measure is made once per scan, never per position.
+    const flatC = template.flatPyrCoarse;
+    const flatG = template.flatPyrGate;
+    const flatM = template.flatPyrMid;
+
     const gateOff = offsetsFor(pyrGate, pw);
     const gate2Cut = midGate * 0.85;
     const kCoarse = gateK(pyrCoarse, coarseGate);
     const kGate2 = gateK(pyrGate, gate2Cut);
     const kMid = gateK(pyrMid, midGate);
-    // The 9-point gate runs on every position (~2M/frame across 15 targets), so
-    // everything after it must stay rare. Positions that clear it used to jump
-    // straight to the 64-point mid score; a 25-point intermediate gate throws
-    // out 90% of them for a third of the work.
+    // The same cuts as a mean grey error, for whichever lattice has no variance to
+    // correlate. `packedMeanAbs` abandons a position once the running sum passes
+    // the budget, which is what keeps a flat sweep affordable: a patch of another
+    // shade costs two or three lattice reads.
+    const coarseAbsCut = flatBudget(coarseGate);
+    const gate2AbsCut = flatBudget(gate2Cut);
+    const gate2AbsBudget = pyrGate.count * gate2AbsCut;
+    const midAbsBudget = midCount * flatBudget(midGate);
+
+    /** Everything after the row gate, for one position that survived it. */
+    const rankAt = (base: number, px: number, py: number): void => {
+      if (flatG) {
+        if (packedMeanAbs(pyrGate, gateOff, buf, base, gate2AbsBudget) > gate2AbsCut) return;
+      } else if (!packedPass(pyrGate, gateOff, buf, base, kGate2)) {
+        return;
+      }
+      let rank: number;
+      if (flatM) {
+        rank = flatLevelScore(packedMeanAbs(pyrMid, midOff, buf, base, midAbsBudget));
+        if (rank < midGate) return;
+      } else {
+        if (!packedPass(pyrMid, midOff, buf, base, kMid)) return;
+        // Only the ~0.16% of positions that clear the mid cut need the real value.
+        rank = packedZNCC(pyrMid, midOff, buf, base);
+      }
+      // Rank on shape *and* hue. A luminance-only rank lets recoloured lookalikes
+      // tie with the real icon and crowd the candidate list, which measured as
+      // 3/48 lost detections once decoys were in the frame — and it counts for
+      // more on a flat lattice, where hue is most of what separates the target
+      // from any other patch of the same brightness.
+      offer(px * S, py * S, useColor ? rank * pyrChroma(base) : rank);
+    };
+
+    // The gate runs on every position (~2M/frame across 15 targets), so it is
+    // streamed a row at a time: same arithmetic in the same order as a
+    // per-position version, so the surviving set is identical, but every frame
+    // read is sequential instead of jumping across pyramid rows.
     const rowLen = pMaxX - pMinX + 1;
     const cN = pyrCoarse.count;
     const cLum = pyrCoarse.lum;
     const cSumLum = pyrCoarse.sumLum;
     const cNN = cN * cN;
-    const rowSum = rowScratchSum(rowLen);
-    const rowSq = rowScratchSq(rowLen);
-    const rowCross = rowScratchCross(rowLen);
-    for (let py = pMinY; py <= pMaxY; py++) {
-      const row = py * pw;
-      // Stage 0: the 9-point gate for the whole row at once. Same arithmetic in the
-      // same order as the per-position version, so the surviving set is identical —
-      // but every frame read is sequential instead of jumping across pyramid rows,
-      // which is where most of the gate's time actually went.
-      rowSum.fill(0, 0, rowLen);
-      rowSq.fill(0, 0, rowLen);
-      rowCross.fill(0, 0, rowLen);
-      for (let i = 0; i < cN; i++) {
-        const o = row + pMinX + coarseOff[i];
-        const t = cLum[i];
+    if (flatC) {
+      // A ZNCC gate here would reject every position, the true one included: it
+      // demands frame-side variance and a positive numerator, and on the uniform
+      // patch this template is, both are ~0.
+      const rowAbs = rowScratchSum(rowLen);
+      const absBudget = cN * coarseAbsCut;
+      for (let py = pMinY; py <= pMaxY; py++) {
+        const row = py * pw;
+        rowAbs.fill(0, 0, rowLen);
+        for (let i = 0; i < cN; i++) {
+          const o = row + pMinX + coarseOff[i];
+          const t = cLum[i];
+          for (let j = 0; j < rowLen; j++) {
+            const d = buf[o + j] - t;
+            rowAbs[j] += d < 0 ? -d : d;
+          }
+        }
         for (let j = 0; j < rowLen; j++) {
-          const f = buf[o + j];
-          rowSum[j] += f;
-          rowSq[j] += f * f;
-          rowCross[j] += f * t;
+          if (rowAbs[j] > absBudget) continue;
+          const px = pMinX + j;
+          rankAt(row + px, px, py);
         }
       }
-      for (let j = 0; j < rowLen; j++) {
-        const fs = rowSum[j];
-        const V = cN * rowSq[j] - fs * fs;
-        if (V <= cNN) continue;
-        const C = cN * rowCross[j] - fs * cSumLum;
-        if (C <= 0) continue;
-        if (C * C < kCoarse * V) continue;
-        const px = pMinX + j;
-        const base = row + px;
-        if (!packedPass(pyrGate, gateOff, buf, base, kGate2)) continue;
-        if (!packedPass(pyrMid, midOff, buf, base, kMid)) continue;
-        // Only the ~0.16% of positions that clear the mid cut need the real value.
-        const midScore = packedZNCC(pyrMid, midOff, buf, base);
-        // Rank on shape *and* hue. A luminance-only rank lets recoloured
-        // lookalikes tie with the real icon and crowd the candidate list, which
-        // measured as 3/48 lost detections once decoys were in the frame.
-        offer(px * S, py * S, useColor ? midScore * pyrChroma(base) : midScore);
+    } else {
+      const rowSum = rowScratchSum(rowLen);
+      const rowSq = rowScratchSq(rowLen);
+      const rowCross = rowScratchCross(rowLen);
+      for (let py = pMinY; py <= pMaxY; py++) {
+        const row = py * pw;
+        rowSum.fill(0, 0, rowLen);
+        rowSq.fill(0, 0, rowLen);
+        rowCross.fill(0, 0, rowLen);
+        for (let i = 0; i < cN; i++) {
+          const o = row + pMinX + coarseOff[i];
+          const t = cLum[i];
+          for (let j = 0; j < rowLen; j++) {
+            const f = buf[o + j];
+            rowSum[j] += f;
+            rowSq[j] += f * f;
+            rowCross[j] += f * t;
+          }
+        }
+        for (let j = 0; j < rowLen; j++) {
+          const fs = rowSum[j];
+          const V = cN * rowSq[j] - fs * fs;
+          if (V <= cNN) continue;
+          const C = cN * rowCross[j] - fs * cSumLum;
+          if (C <= 0) continue;
+          if (C * C < kCoarse * V) continue;
+          const px = pMinX + j;
+          rankAt(row + px, px, py);
+        }
       }
     }
   } else if (frameGray) {
     for (let y = minY; y <= maxY; y += step) {
       const rowOffset = y * frameWidth;
       for (let x = minX; x <= maxX; x += step) {
-        const coarse = computeSparseZNCC(
-          coarseSamples,
-          8,
-          coarseMean,
-          coarseStd,
-          frameGray,
-          rowOffset,
-          x,
-          frameWidth
-        );
-        if (coarse < coarseGate) continue;
+        if (template.flatCoarse) {
+          if (
+            sparseMeanAbs(coarseSamples, 8, frameGray, rowOffset, x, frameWidth) >
+            flatBudget(coarseGate)
+          ) {
+            continue;
+          }
+        } else {
+          const coarse = computeSparseZNCC(
+            coarseSamples,
+            8,
+            coarseMean,
+            coarseStd,
+            frameGray,
+            rowOffset,
+            x,
+            frameWidth
+          );
+          if (coarse < coarseGate) continue;
+        }
 
-        const midScore = computeSparseZNCC(
-          midSamples,
-          16,
-          midMean,
-          midStd,
-          frameGray,
-          rowOffset,
-          x,
-          frameWidth
-        );
+        // Ranking stays luminance-only here, flat or not; colour enters in Stage 2.
+        let midScore = template.flatMid
+          ? flatLevelScore(
+              sparseMeanAbs(midSamples, 16, frameGray, rowOffset, x, frameWidth)
+            )
+          : computeSparseZNCC(
+              midSamples,
+              16,
+              midMean,
+              midStd,
+              frameGray,
+              rowOffset,
+              x,
+              frameWidth
+            );
         if (midScore < midGate) continue;
+        if (rankOnFull) {
+          // The 16-point lattice was only a gate for this target: it cannot tell
+          // the true position from any other patch of the same shade, so it just
+          // kept the reads cheap on the other shades. The 64-point grid does see
+          // the target's structure, and a patch that lacks it has ~no variance
+          // over that grid, so this both orders the survivors and drops the ties.
+          midScore = computeSparseZNCC(
+            samples,
+            numSamples,
+            sampleMean,
+            sampleStd,
+            frameGray,
+            rowOffset,
+            x,
+            frameWidth
+          );
+          if (midScore < midGate) continue;
+        }
         offer(x, y, midScore);
       }
     }

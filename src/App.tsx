@@ -176,6 +176,8 @@ export default function App() {
   // 手動從設定裡打開時傳 null，讓對話框自己重新查一次。
   const [isUpdateModalOpen, setIsUpdateModalOpen] = useState(false);
   const [autoUpdateInfo, setAutoUpdateInfo] = useState<UpdateInfo | null>(null);
+  // 查到有新版，但還不到可以打斷使用者的時候，就先擺在這裡等。
+  const [pendingUpdate, setPendingUpdate] = useState<UpdateInfo | null>(null);
 
   // Browser Notification Status
   const [notificationPermission, setNotificationPermission] = useState<NotificationPermission | 'unsupported'>(
@@ -496,8 +498,8 @@ export default function App() {
   }, [refreshPendingCount]);
 
   /**
-   * 開機檢查更新。晚幾秒再問，免得跟啟動時的登入驗證擠在一起；只有真的有新版、
-   * 而且使用者沒有對那個版本按過「跳過此版本」時才會跳出來。
+   * 開機檢查更新。晚幾秒再問，免得跟啟動時的登入驗證擠在一起。查到結果先放進
+   * pendingUpdate，什麼時候真的跳出來由下面那個 effect 決定。
    */
   useEffect(() => {
     if (isNativeFloatingWindow) return;
@@ -507,13 +509,15 @@ export default function App() {
     const timer = setTimeout(() => {
       void api.checkForUpdate!().then((info) => {
         if (cancelled || !info.ok || !info.hasUpdate) return;
+        // 這個 tag 上次已經換過檔了、版號卻沒進步。再提示只會叫他重下一次 90 MB，
+        // 而且下次開機又會再問一遍。要更新的話從選單自己打開，那裡會說明原因。
+        if (info.staleRetry) return;
         let skipped = '';
         try {
           skipped = localStorage.getItem(SKIPPED_VERSION_KEY) || '';
         } catch {}
         if (skipped && skipped === info.latestVersion) return;
-        setAutoUpdateInfo(info);
-        setIsUpdateModalOpen(true);
+        setPendingUpdate(info);
       });
     }, 4000);
     return () => {
@@ -521,6 +525,27 @@ export default function App() {
       clearTimeout(timer);
     };
   }, [isNativeFloatingWindow]);
+
+  /**
+   * 有新版不等於現在就該說。兩個時機一定要避開：
+   *   - 登入視窗還開著：更新視窗是 z-60、登入是 z-100，它會被壓在底下——使用者
+   *     看不到，卻已經開了，關掉登入視窗後莫名多一層。
+   *   - 正在偵測：跳出來就是打斷他正在顧的東西，而按下更新還會直接關掉程式。
+   * 所以先留著，等畫面空下來再說。一直沒空就不提，選單裡隨時打得開。
+   */
+  useEffect(() => {
+    if (!pendingUpdate) return;
+    // 他自己從選單打開了更新視窗——那該說的都說了，把待辦丟掉，否則他一關掉
+    // 這個視窗，同一個視窗就會立刻自己再彈出來一次。
+    if (isUpdateModalOpen) {
+      setPendingUpdate(null);
+      return;
+    }
+    if (isAuthModalOpen || isStreamActive) return;
+    setAutoUpdateInfo(pendingUpdate);
+    setPendingUpdate(null);
+    setIsUpdateModalOpen(true);
+  }, [pendingUpdate, isUpdateModalOpen, isAuthModalOpen, isStreamActive]);
 
   /**
    * 跟後端重新確認登入狀態。啟動時做一次，之後每 10 分鐘一次，切回前景時也做一次——
@@ -1095,7 +1120,10 @@ export default function App() {
           playAlertSound(rule.soundType || 'double_ding', ruleVol);
         }
 
-        if (window.electronAPI?.performMouseAction) {
+        // 「只提醒不點擊」就真的不要碰滑鼠。以前這裡照樣呼叫下去，DoAction 認不得
+        // sound_only 所以不會按下按鍵，但 returnToCenter 預設是開的——結果游標會被
+        // 拉到螢幕正中央。使用者只是要一個提示音，手上的滑鼠卻自己跑掉了。
+        if (rule.action !== 'sound_only' && window.electronAPI?.performMouseAction) {
           void performMappedClick(
             rule.action,
             centerX,
@@ -1171,7 +1199,11 @@ export default function App() {
   // and the search itself runs on several cores instead of one.
   // ═══════════════════════════════════════════════════════════════════
   useEffect(() => {
-    if (!isStreamActive || isPaused || isCropModalOpen || isRoiModalOpen) return;
+    if (!isStreamActive || isPaused || isCropModalOpen || isRoiModalOpen) {
+      // Nothing is being searched, so nothing is running on the card either.
+      setGpuActive(false);
+      return;
+    }
     // Wait for the adapter probe rather than starting on the CPU and swapping a
     // few milliseconds later: that swap would tear down a live worker pool.
     if (gpuMode === 'probing') return;
@@ -1199,6 +1231,14 @@ export default function App() {
     // single worker holds every target — a second one would just mean a second
     // device, a second frame upload and a second copy of the same planes.
     const useGpu = gpuMode === 'gpu';
+    // The purple GPU badge is a claim about the workers that are running *now*, so
+    // a run on the CPU pool has to drop it up front. Clearing it in the cleanup
+    // instead was the bug: tearing a GPU run down leaves `useGpu` true, so the
+    // demotion back to the pool never cleared it and the badge stayed lit over a
+    // session that was searching entirely on the CPU. A GPU run does not need to
+    // clear it here — its worker re-announces itself the moment its self-test
+    // passes, and clearing it would only make the badge blink on every re-run.
+    if (!useGpu) setGpuActive(false);
     const cores = navigator.hardwareConcurrency || 4;
     const poolSize = useGpu
       ? 1
@@ -1249,7 +1289,17 @@ export default function App() {
     // the job only if its median is not worse. The first eight frames of each
     // window are dropped: worker startup, shader compilation and the GPU
     // self-test all land there and none of them repeat.
-    const recordFrameTime = (ms: number) => {
+    //
+    // Only frames that actually searched count, and only frames the whole pool
+    // searched. Both backends short-circuit a pixel-identical frame, so an idle
+    // frame measures one readback and one memcmp no matter which backend is
+    // running — averaging those in would mean the verdict depended on how still
+    // the window happened to be during each window rather than on which backend
+    // searches faster. A wake-up frame is excluded for the same reason from the
+    // other side: while the pool is asleep only one worker gets the frame, so it
+    // times one shard of a search, not a whole one. In GPU mode the pool is one
+    // worker, so every searched frame there is a whole search and nothing is lost.
+    const recordFrameTime = (ms: number, searched: boolean, fullPool: boolean) => {
       const trial = backendTrialRef.current;
       if (trial.verdict !== 'unknown') return;
       if (trial.targets !== enabledTargets.length) {
@@ -1258,6 +1308,7 @@ export default function App() {
         trial.samples = [];
         return;
       }
+      if (!searched || !fullPool) return;
       trial.samples.push(ms);
       if (trial.samples.length < 24) return;
       const median = trial.samples.slice(8).sort((a, b) => a - b)[8];
@@ -1286,6 +1337,8 @@ export default function App() {
     // burning every core on a motionless screen and using almost nothing.
     let gateMode = false;
     let frameAllUnchanged = true;
+    /** Did every worker get this frame? Only then does its time describe the pool. */
+    let frameFullPool = true;
     /** Last complete score set, used to fill in the shards that are asleep. */
     let lastMerged: { targetId: string; score: number; box: Rect }[] = [];
 
@@ -1320,6 +1373,7 @@ export default function App() {
       // Asleep: only the first worker gets a frame, so the CPU cost of a still
       // screen is one readback and one memcmp instead of a full search per core.
       const active = gateMode ? workers.slice(0, 1) : workers;
+      frameFullPool = active.length === workers.length;
       try {
         // One bitmap per worker: a transferred ImageBitmap belongs to exactly one
         // thread, so it cannot be shared. createImageBitmap on a <video> is
@@ -1399,7 +1453,7 @@ export default function App() {
         applyDetectionResults(mergedResults, mergedWidth, mergedHeight, enabledTargets);
       } finally {
         const scanElapsed = performance.now() - scanStartRef.current;
-        recordFrameTime(scanElapsed);
+        recordFrameTime(scanElapsed, !frameAllUnchanged, frameFullPool);
 
         const nowMs = performance.now();
         if (nowMs - lastTelemetryUpdateRef.current > 400) {
@@ -1439,7 +1493,6 @@ export default function App() {
         w.onmessage = null;
         w.terminate();
       });
-      if (!useGpu) setGpuActive(false);
     };
   }, [
     isStreamActive,

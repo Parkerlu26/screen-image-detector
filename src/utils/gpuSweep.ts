@@ -316,8 +316,20 @@ export class GpuSweeper {
     this.ensureOutBuffers(targets.length);
   }
 
+  /**
+   * Can this target be swept on the GPU at all? The shaders implement one measure —
+   * the ZNCC over the pyramid lattices — so a template with *any* degenerate
+   * lattice (`flatPyr`) has to stay on the CPU, where each lattice switches to
+   * absolute agreement on its own. One flat lattice is enough to matter: the
+   * shader's coarse gate demands frame-side variance and a positive numerator, and
+   * over the uniform patch such a template is, both are ~0, so the sweep would
+   * return an empty candidate list and the target would simply never be found.
+   */
   private hasPyramid(t: PreprocessedTemplate): boolean {
-    return !!t.pyrMid && t.pyrWidth >= 2 && t.pyrHeight >= 2;
+    // `pyrMid` being null is already the "too small for a pyramid" answer:
+    // `prepareTemplate` only builds the lattices when the template has a 2x2
+    // interior of blocks to sample.
+    return !!t.pyrMid && !!t.pyrGate && !!t.pyrCoarse && !t.flatPyr;
   }
 
   private ensureOutBuffers(count: number): void {
