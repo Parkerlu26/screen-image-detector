@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink } from 'lucide-react';
+import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, FileText } from 'lucide-react';
 
 /** main process 回傳的檢查結果。刻意沒有 downloadUrl：畫面層不需要知道，也不該
  *  有機會影響下載來源——那個檔案下載完會被當成程式本身執行。 */
@@ -28,10 +28,19 @@ interface UpdateApi {
     ok: boolean;
     message?: string;
     cancelled?: boolean;
+    /** true＝主程序馬上會關掉自己並啟動新版；false＝檔案已經換好，但要使用者自己重開。 */
     restarting?: boolean;
+    /**
+     * 檔名是不是已經換好了。restarting 為 true 時這兩件事仍然是分開的：
+     * 換好了＝關掉之後啟動的一定是新版；還沒換好＝關掉之後由更新程式接手換檔，
+     * 而換檔還可能失敗（那時它會把原本的版本重新啟動）。畫面要照實說。
+     */
+    swapped?: boolean;
   }>;
   cancelUpdateDownload?: () => Promise<boolean>;
   openReleasePage?: (url?: string) => Promise<boolean>;
+  /** 打開更新紀錄檔。換檔的後半段發生在程式關掉之後，只留在那個檔案裡。 */
+  openUpdateLog?: () => Promise<boolean>;
   onUpdateDownloadProgress?: (
     cb: (data: { received: number; total: number }) => void
   ) => () => void;
@@ -61,6 +70,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [restarting, setRestarting] = useState(false);
+  // 要重開了，但檔名還沒換好——換檔交給了外面那支更新程式。這種時候不能承諾
+  // 「啟動新版」，因為它還可能換不成而把原本的版本重新啟動。
+  const [swapPending, setSwapPending] = useState(false);
+  // 「換好了，但要你自己重開」。這不是錯誤，所以跟 error 分開，用不同顏色講。
+  const [handoff, setHandoff] = useState('');
   const isDownloading = progress !== null && !restarting;
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -74,7 +88,15 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
       return;
     }
     setIsChecking(true);
+    // 上一輪的結果全部清掉。只清 error 是不夠的：使用者按過「立即更新」失敗、
+    // 再按「重新檢查」的時候，殘留的 progress 會讓進度條掛在那裡，殘留的 handoff
+    // 會用綠字說「更新已經完成」，而 restarting 還會把所有按鈕藏起來——畫面於是
+    // 停在一個沒有出口的狀態，講的還是上一輪的事。
     setError('');
+    setHandoff('');
+    setProgress(null);
+    setRestarting(false);
+    setSwapPending(false);
     try {
       setInfo(await api.checkForUpdate());
     } finally {
@@ -104,15 +126,24 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
     if (!api?.downloadUpdate || !info?.canAutoUpdate || busyRef.current) return;
     busyRef.current = true;
     setError('');
+    setHandoff('');
     setProgress({ received: 0, total: info.downloadSize || 0 });
     try {
       const result = await api.downloadUpdate();
-      if (result.ok) {
+      // 只有主程序明確說「我要重新啟動了」才顯示那句話。舊版是「ok 就當成要重開」，
+      // 於是換檔腳本被防毒擋掉的時候，畫面會永遠停在「即將關閉並啟動新版本…」。
+      if (result.ok && result.restarting === true) {
         // main process 會在幾百毫秒後關掉程式，這裡只要讓畫面說清楚就好。
         setRestarting(true);
+        setSwapPending(result.swapped === false);
         return;
       }
       setProgress(null);
+      if (result.ok) {
+        // 檔案已經換好了，只是沒辦法自動重開——這是成功，不要用紅字嚇他。
+        setHandoff(result.message || '新版已經換好了，請關掉這個程式再打開一次。');
+        return;
+      }
       // 自己按取消的不算錯誤，不用再嚇他一次。
       if (!result.cancelled) setError(result.message || '更新失敗');
     } catch (err) {
@@ -125,7 +156,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
   };
 
   const cancel = async () => {
-    await updateApi()?.cancelUpdateDownload?.();
+    // 回傳 false＝主程序手上沒有正在進行的下載（已經下載完、正在換檔了）。
+    // 那時候把進度清掉是錯的：畫面會變成一個沒有進度、也沒有任何按鈕的空對話框，
+    // 而換檔其實還在跑。只有真的取消掉才收掉進度條。
+    const stopped = await updateApi()?.cancelUpdateDownload?.();
+    if (stopped === false) return;
     setProgress(null);
   };
 
@@ -253,11 +288,23 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
               </div>
               <p className="text-sm text-slate-400">
                 {restarting
-                  ? '下載完成，即將關閉並啟動新版本…'
+                  ? swapPending
+                    ? '下載完成，即將關閉，接著由更新程式把新版換上去並開啟…'
+                    : '下載完成，即將關閉並啟動新版本…'
                   : `正在下載 ${formatSize(progress.received)}${
                       progress.total ? ` / ${formatSize(progress.total)}` : ''
                     }${percent !== null ? `（${percent}%）` : ''}`}
               </p>
+            </div>
+          )}
+
+          {handoff && (
+            <div className="flex items-start gap-3 text-emerald-300 bg-emerald-950/40 border border-emerald-900 rounded-xl p-4">
+              <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
+              <div className="space-y-1">
+                <p className="font-semibold">更新已經完成</p>
+                <p className="text-sm text-emerald-200/80">{handoff}</p>
+              </div>
             </div>
           )}
 
@@ -284,6 +331,17 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
                 重新檢查
               </button>
             )}
+            {/* 換檔的後半段發生在程式關掉之後，畫面收不到任何回報，所以出問題時
+                一定要給他一個入口去看那份紀錄。 */}
+            {(error || handoff) && updateApi()?.openUpdateLog && (
+              <button
+                onClick={() => void updateApi()?.openUpdateLog?.()}
+                className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
+              >
+                <FileText className="w-3.5 h-3.5" />
+                更新紀錄
+              </button>
+            )}
           </div>
 
           <div className="flex items-center gap-2">
@@ -296,7 +354,7 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
               </button>
             ) : restarting ? null : (
               <>
-                {info?.ok && info.hasUpdate && (
+                {info?.ok && info.hasUpdate && !handoff && (
                   <button
                     onClick={skipThisVersion}
                     className="px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors"
@@ -308,9 +366,9 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
                   onClick={onClose}
                   className="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
                 >
-                  {info?.ok && info.hasUpdate ? '稍後再說' : '關閉'}
+                  {info?.ok && info.hasUpdate && !handoff ? '稍後再說' : '關閉'}
                 </button>
-                {info?.ok && info.hasUpdate && info.canAutoUpdate && (
+                {info?.ok && info.hasUpdate && info.canAutoUpdate && !handoff && (
                   <button
                     onClick={() => void startDownload()}
                     className="px-4 py-2 rounded-lg text-sm font-bold bg-cyan-600 text-white hover:bg-cyan-500 transition-colors flex items-center gap-2"

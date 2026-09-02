@@ -1,16 +1,28 @@
 // 檢查更新 / 一鍵更新。免安裝綠色版沒有安裝器，所以流程是：讀 GitHub 最新 Release
-// → 比版號 → 下載成 <目前exe>.new → 驗 sha256 → 交給一個獨立的 PowerShell 等本程序
-// 結束後「就地換名」（舊檔搬去 .old、新檔頂上原本的檔名）→ 啟動 → 確認起得來才刪備份。
+// → 比版號 → 下載成 <目前exe>.new → 驗 sha256 → 在本程序內就把檔名換好（舊檔搬去
+// .old、新檔頂上原本的檔名）→ 交給一個獨立的 PowerShell 等本程序結束後啟動新版 →
+// 確認起得來才刪備份。
 //
-// 三個關鍵決定，都是從「使用者最後一定要有一個能跑的程式」這個條件推出來的：
+// 四個關鍵決定，都是從「使用者最後一定要有一個能跑的程式」這個條件推出來的：
 //   1. 換檔用原本的檔名，不另存新檔名。捷徑、釘選、開機啟動項都指向那個路徑，
 //      改名等於每次更新都把它們弄壞；使用者自己取的檔名也會被保留。
-//   2. 舊檔只搬去 .old，不直接刪。要等新版真的啟動起來才刪備份，而「真的啟動起來」
-//      是靠旗標檔握手回答的：腳本建立 <exe>.updating，新版把主視窗的畫面載完之後
-//      才把它刪掉。判定失敗就把 .old 搬回原檔名並啟動它。
+//   2. 換檔在「程式還活著」的時候就做完。Windows 禁止刪除正在執行的映像檔，但允許
+//      改名，所以這件事根本不必等程式結束、也不必外包給腳本。這樣做的理由是失敗面：
+//      換檔一旦在這裡完成，原路徑上就已經是新版，後面那個 PowerShell 不管被防毒擋掉、
+//      被 EDR 砍掉還是根本沒被執行，使用者只要再打開他平常用的那個檔案就是新版。
+//      舊的做法把「換檔」和「重開」一起外包出去，於是腳本一失敗就兩件事都沒發生：
+//      程式自己關掉、新版沒開、舊版還在原地——而且沒有任何紀錄。
+//   3. 因此外面那個腳本只剩一件事：等本程序結束 → 啟動新版 → 確認它起得來 → 刪備份。
+//      而且要先證明它自己活著（在紀錄檔寫下第一行）本程序才會 quit。spawn 成功只代表
+//      行程被建立，防毒把它砍掉的時候 spawn 一樣會成功。等不到就不要關程式，改成請
+//      使用者自己關掉再打開——那句話一定成立，因為檔案已經換好了。
+//      「新版真的啟動起來」同樣要正向證據：腳本建立 <exe>.updating，新版把主視窗的
+//      畫面載完之後才把它刪掉。判定失敗就把 .old 搬回原檔名並啟動它。
 //      不變式只有一條，但必須永遠成立：任何一步失敗之後，原本那個路徑上都還要有
 //      一個能執行的檔案。
-//   3. 下載網址、版號、雜湊值一律由主程序自己向 GitHub 問，不接受畫面層傳進來的值。
+//   4. 全程寫一份純文字紀錄放在 exe 旁邊。程式關掉之後發生的事情，沒有紀錄就完全
+//      看不見，只能猜。這份紀錄是唯一能事後回答「那次更新到底卡在哪一步」的東西。
+//   5. 下載網址、版號、雜湊值一律由主程序自己向 GitHub 問，不接受畫面層傳進來的值。
 //      這個檔案下載完會被執行，信任來源只能是 TLS 之下的 api.github.com。
 const { app, shell } = require('electron');
 const path = require('path');
@@ -33,10 +45,41 @@ const ALLOWED_HOSTS = ['github.com', 'githubusercontent.com'];
 const NEW_SUFFIX = '.new';
 const OLD_SUFFIX = '.old';
 const PART_SUFFIX = '.part';
+// 「改名全被拒絕、只能用複製」時的落地檔名。複製不能直接寫使用者天天雙擊的那個路徑：
+// 中途斷電或磁碟滿了會在那個檔名底下留一個半截的 exe，而後面每一個判斷都只看
+// 「檔案存在嗎」，於是會一路把它當成一個能執行的程式。先落地再改名，改名是原子的。
+const COPY_SUFFIX = '.copy';
 // 換檔進行中的旗標。換檔腳本在啟動新版之前建立它，新版啟動時把它刪掉——
 // 「新版真的跑起來了」這件事就是靠這個刪除動作回答的，而不是靠「幾秒內沒死掉」。
 // 它同時也是「現在不要清暫存檔」的信號：腳本這時手上還握著 .old 當回滾用。
 const SWAP_MARK_SUFFIX = '.updating';
+// 「可以重開了」的許可檔。主程序決定要關閉自己的時候才寫下它，換檔腳本等到舊程序
+// 消失之後第一件事就是檢查它在不在——不在就一步都不走。
+// 這是必要的，因為「腳本被建立了」和「主程序決定關閉」是兩件獨立的事：等不到腳本
+// 回報活著的時候主程序會留在原地，可是那個腳本可能只是慢，它還在等舊程序消失。
+// 使用者照畫面指示自己關掉程式的那一刻，等待就結束了，腳本於是往下走——而這時
+// 主程序早就把 .new 改名成交手用的檔名，腳本找不到新版，最後那句 Start-Process
+// 啟動的是舊版，還會用單一實例鎖把使用者剛剛打開的新版踢掉。那正是
+// 「更新完打開還是舊版」的其中一條路徑。
+const SWAP_GO_SUFFIX = '.relaunch';
+// 更新過程的純文字紀錄，放在 exe 旁邊（不是 userData）——出問題的時候使用者要找得到它、
+// 打得開、寄得出來。程式關掉之後的每一步都只剩這裡看得到。
+const SWAP_LOG_FILENAME = '六月幫你顧-更新紀錄.txt';
+const SWAP_LOG_MAX_BYTES = 64 * 1024;
+// 換檔腳本必須在這段時間內自己寫下第一行，本程序才會關閉。PowerShell 冷啟動慢的機器
+// 大約 1～3 秒，給到 8 秒；使用者這時看著「下載完成」，多等幾秒沒有代價。
+const WATCHDOG_ALIVE_TIMEOUT_MS = 8000;
+const WATCHDOG_POLL_MS = 150;
+// 新版啟動後要在多久之內、多密集地去看那個旗標。刻意不是「載完畫面時看一次」：
+// 旗標是換檔腳本建立的，而它建立旗標的時間點不保證早於新版把畫面畫出來的時間點。
+// 只看一次的話，那種「使用者自己先把新版打開了」的情況沒有任何人會去刪旗標，
+// 腳本於是判定新版起不來，把一個好的新版回滾掉——那就是「更新完打開還是舊版」。
+// 窗口要比腳本等旗標的時間（120 秒）長一點，否則兩邊會在邊界上互相錯過。
+const BOOT_CONFIRM_WINDOW_MS = 150000;
+const BOOT_CONFIRM_POLL_MS = 500;
+// 新版啟動後多久清掉 .old / .new。旗標被刪掉的那一刻換檔腳本就已經判定成功、
+// 不會再回滾，所以那之後備份不再是回滾材料，可以自己清——不必依賴腳本活著。
+const SWAP_CLEANUP_DELAY_MS = 15000;
 // 記下「已經套用過哪個 tag」。萬一 Release 的 tag 與 exe 內建版號不一致，
 // 沒有這個紀錄就會每次開機都提示更新、下載、重開，永遠停不下來。
 const APPLIED_FILENAME = 'applied-update.json';
@@ -220,6 +263,25 @@ function localExeName(tag) {
 }
 
 /**
+ * 兩個路徑指的是不是同一個檔案。用來擋「交手用的檔名剛好就是使用者正在執行的那個
+ * 檔案」——那時候先 rm 再 rename 會去動他手上唯一能跑的東西。
+ *
+ * 不能用 `a !== b` 判斷：Windows 的檔案系統不分大小寫，`...v1.3.1.exe` 和
+ * `...V1.3.1.EXE` 是同一個檔案，但字串不相等。tag 從 GitHub 來，大小寫不在我們
+ * 手上。resolve 先把分隔符與相對片段正規化，再一起降成小寫比。
+ * 這是保守方向的比較：寧可多判成「同一個」而放棄改名（結果是照原樣提示使用者），
+ * 也不要少判而去刪掉他正在跑的檔案。
+ */
+function samePath(a, b) {
+  if (!a || !b) return false;
+  try {
+    return path.resolve(a).toLowerCase() === path.resolve(b).toLowerCase();
+  } catch {
+    return String(a).toLowerCase() === String(b).toLowerCase();
+  }
+}
+
+/**
  * Release 裡那個「就是程式本身」的 exe。
  * 不能只取第一個 .exe：build 設定裡還有 nsis target，哪一天同一個 Release 多放一個
  * 安裝檔，靜默換檔流程就會把安裝檔當成程式本身搬到原檔名上——使用者的捷徑從此指向
@@ -268,6 +330,51 @@ function canWrite(dir) {
   }
 }
 
+/** 更新紀錄檔的位置：跟 exe 同一個資料夾。 */
+function swapLogPath() {
+  const dir = exeDir();
+  return dir ? path.join(dir, SWAP_LOG_FILENAME) : '';
+}
+
+/** 紀錄檔不能無限長。超過上限就砍掉前半段，並且從下一個換行開始留，不留半行。 */
+function trimSwapLog(file) {
+  try {
+    if (fs.statSync(file).size <= SWAP_LOG_MAX_BYTES) return;
+    const buf = fs.readFileSync(file);
+    const keep = buf.subarray(buf.length - Math.floor(SWAP_LOG_MAX_BYTES / 2));
+    const cut = keep.indexOf(0x0a);
+    fs.writeFileSync(file, cut >= 0 ? keep.subarray(cut + 1) : keep);
+  } catch {}
+}
+
+/** 本地時間的時間戳。刻意不用 toISOString()：那是 UTC，而換檔腳本那邊寫進同一個檔案的
+ *  是本地時間，同一份紀錄裡混兩種時區只會讓人看不懂事件的先後。 */
+function logStamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`;
+}
+
+/**
+ * 寫一行紀錄。回傳紀錄檔路徑，寫不進去（資料夾唯讀）就回空字串——更新本身不會因為
+ * 寫不了紀錄而失敗。
+ * 開頭補 BOM、換行用 CRLF，都是為了「使用者用記事本打開它」這個唯一的使用情境。
+ * 換檔腳本用 Add-Content -Encoding UTF8 接著往下寫，接得起來。
+ */
+function appendSwapLog(line) {
+  const file = swapLogPath();
+  if (!file) return '';
+  try {
+    let head = '';
+    if (!fs.existsSync(file)) head = '﻿';
+    else trimSwapLog(file);
+    fs.appendFileSync(file, `${head}${logStamp()}  ${line}\r\n`, 'utf8');
+    return file;
+  } catch {
+    return '';
+  }
+}
+
 function appliedPath() {
   try {
     return path.join(app.getPath('userData'), APPLIED_FILENAME);
@@ -276,23 +383,41 @@ function appliedPath() {
   }
 }
 
-/** 上一次真的送出去換檔的 tag。 */
-function readAppliedTag() {
+/**
+ * 上一次真的送出去換檔的 tag，以及同一個 tag 送出去過幾次。
+ *
+ * 為什麼要記次數：光有 tag 的話，「這個版本已經試過了」就會變成一次定終身。而
+ * 「試過了但版號沒動」有兩種完全不同的成因——發布時 tag 與 exe 內建版號不一致
+ * （再試一百次都一樣），或是那一次換檔被防毒／檔案鎖擋掉（換個時間就成了）。
+ * 前者要閉嘴，後者該再試一次。分不出來就折衷：同一個 tag 給兩次機會。
+ */
+function readApplied() {
   const file = appliedPath();
-  if (!file) return '';
+  if (!file) return { tag: '', attempts: 0 };
   try {
     const data = JSON.parse(fs.readFileSync(file, 'utf8'));
-    return String((data && data.tag) || '');
+    return {
+      tag: String((data && data.tag) || ''),
+      attempts: Number((data && data.attempts) || 0) || 0,
+    };
   } catch {
-    return '';
+    return { tag: '', attempts: 0 };
   }
+}
+
+/** 只給版號比較用的舊介面。 */
+function readAppliedTag() {
+  return readApplied().tag;
 }
 
 function writeAppliedTag(tag) {
   const file = appliedPath();
   if (!file) return;
+  const next = String(tag || '');
+  const prev = readApplied();
+  const attempts = prev.tag === next ? prev.attempts + 1 : 1;
   try {
-    fs.writeFileSync(file, JSON.stringify({ tag: String(tag || ''), at: Date.now() }), 'utf8');
+    fs.writeFileSync(file, JSON.stringify({ tag: next, attempts, at: Date.now() }), 'utf8');
   } catch {}
 }
 
@@ -307,13 +432,27 @@ function writeAppliedTag(tag) {
  */
 function cleanupLeftovers() {
   const exe = currentExe();
-  if (!exe) return;
-  if (fs.existsSync(exe + SWAP_MARK_SUFFIX)) return;
-  for (const file of [exe + NEW_SUFFIX + PART_SUFFIX, exe + NEW_SUFFIX, exe + OLD_SUFFIX]) {
+  const removed = [];
+  if (!exe) return removed;
+  if (fs.existsSync(exe + SWAP_MARK_SUFFIX)) return removed;
+  // .relaunch 也在這裡清掉：它只在「這一輪主程序決定關閉」的那幾百毫秒內有意義，
+  // 留到下一輪就變成一張過期的許可證，會讓下一次的換檔腳本以為可以動手。
+  for (const file of [
+    exe + NEW_SUFFIX + PART_SUFFIX,
+    exe + NEW_SUFFIX,
+    exe + OLD_SUFFIX,
+    exe + COPY_SUFFIX,
+    exe + SWAP_GO_SUFFIX,
+  ]) {
     try {
+      if (!fs.existsSync(file)) continue;
       fs.rmSync(file, { force: true });
+      if (!fs.existsSync(file)) removed.push(path.basename(file));
     } catch {}
   }
+  // 只有真的清掉東西才寫紀錄，普通啟動不留痕跡。
+  if (removed.length) appendSwapLog(`已清掉更新暫存檔：${removed.join('、')}`);
+  return removed;
 }
 
 /**
@@ -323,18 +462,57 @@ function cleanupLeftovers() {
  * 「使用者拿到一個能用的程式了嗎」，而 whenReady 只證明 Electron 的主程序起來了；
  * 畫面載完才代表 Chromium、asar 裡的前端、preload 這一整條都沒問題。
  *
- * 刪完之後刻意不順手清 .new / .old：腳本這一刻正要判定成功並自己刪備份，
- * 萬一它因為別的原因判定失敗（例如新檔被防毒吃掉），那個備份是唯一的退路。
+ * 刪掉旗標之後隔一段時間才自己清 .new / .old：刪旗標的那一刻，換檔腳本就已經看到
+ * 成功、不會再走回滾那條路，備份於是不再是回滾材料。以前這件事完全交給腳本做，
+ * 腳本被防毒擋掉就會留下一個 90 MB 的 .old 躺到下一次開機——那正是「舊版沒被刪掉」
+ * 這個症狀。現在腳本活著就它刪，腳本死了就這裡刪，兩邊都失手才留到下次開機。
  *
  * 這個動作是換檔協定的一半，未來版本不能拿掉，否則舊版的換檔腳本會以為新版沒起來
  * 而把它回滾掉。
+ *
+ * 為什麼要持續看而不是載完畫面時看一次：旗標是換檔腳本建立的，而「腳本建立旗標」
+ * 和「新版把畫面畫出來」之間沒有先後保證。最具體的一條路是——使用者在舊程序關掉
+ * 之後、腳本啟動新版之前，自己搶先雙擊打開了程式。他那一份先拿到單一實例鎖，畫面
+ * 早在旗標出現之前就載完了；腳本啟動的第二份被鎖擋掉、立刻 exit 0；於是旗標留在
+ * 那裡沒有人刪，腳本等滿之後判定「新版起不來」，把使用者正在用的新版回滾成舊版。
+ * 只要任何一個實例在窗口內看到旗標就把它刪掉，這條路就消失了。
  */
 function confirmBootForSwap() {
   const exe = currentExe();
   if (!exe) return;
-  try {
-    fs.rmSync(exe + SWAP_MARK_SUFFIX, { force: true });
-  } catch {}
+  const mark = exe + SWAP_MARK_SUFFIX;
+  const consume = () => {
+    let there = false;
+    try {
+      there = fs.existsSync(mark);
+    } catch {}
+    if (!there) return false;
+    try {
+      fs.rmSync(mark, { force: true });
+    } catch {}
+    appendSwapLog(`新版 v${app.getVersion()} 已經啟動並載入畫面，更新成功`);
+    setTimeout(() => {
+      cleanupLeftovers();
+    }, SWAP_CLEANUP_DELAY_MS).unref?.();
+    return true;
+  };
+  if (consume()) return;
+  // 旗標還沒出現。它可能永遠不會出現（這只是一次普通的啟動），也可能晚幾秒才出現
+  // （腳本還在等舊程序結束）。兩種都要顧到，所以在窗口內持續看。
+  let left = Math.ceil(BOOT_CONFIRM_WINDOW_MS / BOOT_CONFIRM_POLL_MS);
+  const timer = setInterval(() => {
+    if (consume()) {
+      clearInterval(timer);
+      return;
+    }
+    if (--left > 0) return;
+    clearInterval(timer);
+    // 整個窗口都沒有旗標。若這其實是一次換檔（腳本連旗標都建不出來時就會這樣），
+    // 那麼 .old / .new 到現在都沒有人清——腳本刪不掉就會留一份 90 MB 躺到下一次
+    // 開機，而那正是「舊的執行檔沒有被移除」。這裡補一次；普通啟動時它什麼都不做。
+    cleanupLeftovers();
+  }, BOOT_CONFIRM_POLL_MS);
+  timer.unref?.();
 }
 
 /**
@@ -353,6 +531,7 @@ async function checkForUpdate() {
     const asset = pickExeAsset(release);
     const hasUpdate = isNewer(latestVersion, currentVersion);
     const dir = exeDir();
+    const applied = readApplied();
     return {
       ok: true,
       currentVersion,
@@ -367,8 +546,10 @@ async function checkForUpdate() {
       canAutoUpdate: Boolean(asset) && app.isPackaged && Boolean(currentExe()) && canWrite(dir),
       // 這個附件有沒有 sha256 可以驗。
       verifiable: Boolean(asset && parseDigest(asset.digest)),
-      // 這個 tag 已經換過檔了，但版號還是沒進步 → 不要再自動提示，免得無限重下。
-      staleRetry: hasUpdate && readAppliedTag() === tag,
+      // 這個 tag 已經送出去換檔兩次、版號還是沒進步 → 不要再自動提示，免得無限重下。
+      // 只試過一次就閉嘴是錯的：那一次可能只是被防毒或檔案鎖擋掉，而使用者會因此
+      // 永遠收不到這個版本的提示，停在舊版還以為自己是最新的。
+      staleRetry: hasUpdate && applied.tag === tag && applied.attempts >= 2,
     };
   } catch (err) {
     return {
@@ -386,15 +567,50 @@ function psQuote(text) {
 }
 
 /**
- * 換檔並重開。舊 exe 在執行中是鎖住的，所以這件事必須交給程式外面的人做。
- * 用 -EncodedCommand（UTF-16LE base64）而不是寫成 .bat，是因為 cmd 讀 .bat 用的是
- * 系統 OEM 編碼，中文路徑會變成亂碼。
+ * 寫下「可以重開了」的許可檔，回傳它是否真的在磁碟上。
+ *
+ * 為什麼是許可（正向）而不是中止（反向）：兩種寫法都表達得出意圖，但寫失敗的後果
+ * 天差地遠。反向寫法一旦「該中止卻沒寫成」，腳本就照原計畫啟動它以為的新版，
+ * 而那時原路徑上可能是舊版——使用者按了更新、關掉程式、打開交手用的新版，
+ * 卻看到舊版。正向寫法「該許可卻沒寫成」的後果只是「要自己再打開一次」，
+ * 而檔名早就換好了，打開就是新版。所以失敗方向必須落在正向這一邊。
+ *
+ * 也因此有一條硬規則：只有這個函式回傳 true，才可以呼叫 app.quit()。
+ */
+function writeSwapGo(target) {
+  const file = target + SWAP_GO_SUFFIX;
+  try {
+    fs.writeFileSync(file, 'go', 'utf8');
+    return fs.existsSync(file);
+  } catch {
+    return false;
+  }
+}
+
+/** 每一輪開始前先撕掉上一輪的許可證，過期的許可證比沒有許可證危險。 */
+function clearSwapGo(target) {
+  try {
+    fs.rmSync(target + SWAP_GO_SUFFIX, { force: true });
+  } catch {}
+}
+
+/**
+ * 換檔腳本。它只負責「本程序結束之後」的事：啟動新版、確認起得來、刪備份，
+ * 必要時回滾。換檔本身已經在 swapInProcess() 做完了（preSwapped 為 true 時），
+ * 這裡的換檔分支只是備援——留著是因為 Windows 偶爾真的會拒絕改名（防毒正在掃那個
+ * 90 MB 的檔案），那時候至少還有人會在程式結束後再試一次。
+ *
+ * 用 -Command 傳一段看得懂的腳本，而不是 -EncodedCommand（UTF-16LE base64）：
+ * base64 的命令列是防毒／EDR 最典型的攔阻對象，而「powershell 被靜靜地砍掉」正是
+ * 這整個機制唯一一種無聲的失敗。命令列本身是 Unicode（CreateProcessW），所以中文
+ * 路徑直接放進去沒有問題——當初避開 .bat 是因為 cmd 讀檔案用 OEM 編碼，那是檔案的
+ * 問題，不是命令列的問題。腳本裡因此一律不出現雙引號，避免多一層轉義。
  *
  * ErrorActionPreference 設成 Stop 而不是 SilentlyContinue：這個腳本每一步都會失敗，
  * 而失敗必須被看見、被處理，不能被吞掉繼續往下走（舊版就是這樣才會在新版沒啟動的
  * 情況下把舊檔刪掉）。
  */
-function swapScript({ target, staged, expectedSize }) {
+function swapScript({ target, staged, expectedSize, preSwapped, logFile }) {
   const dir = path.dirname(target);
   return [
     "$ErrorActionPreference = 'Stop'",
@@ -403,71 +619,166 @@ function swapScript({ target, staged, expectedSize }) {
     `$backup = ${psQuote(target + OLD_SUFFIX)}`,
     `$dir = ${psQuote(dir)}`,
     `$size = ${Number(expectedSize) || 0}`,
-    // 換檔旗標。步驟 4 建立它，新版啟動時自己刪掉；它消失就是「新版真的跑起來了」。
+    // 換檔旗標。步驟 3 建立它，新版啟動時自己刪掉；它消失就是「新版真的跑起來了」。
     `$mark = ${psQuote(target + SWAP_MARK_SUFFIX)}`,
+    // 複製的落地點。理由跟 updater.cjs 的 COPY_SUFFIX 一樣：複製不是原子的，
+    // 直接複製到 $target 的話，一個被中斷的複製會在使用者天天雙擊的那個檔名底下
+    // 留一個半截的 exe，而這個腳本每一個判斷用的都是 Test-Path。
+    `$copy = ${psQuote(target + COPY_SUFFIX)}`,
+    // 主程序的許可證。沒有它就表示主程序決定自己不關閉、這一輪由它自己收尾，
+    // 這個腳本於是只做「把原路徑補回一個能執行的檔案」，其餘一律不動。
+    `$go = ${psQuote(target + SWAP_GO_SUFFIX)}`,
+    `$log = ${psQuote(logFile || '')}`,
+    // 檔名已經在程式內換好了嗎。
+    `$pre = $${preSwapped ? 'true' : 'false'}`,
+    // $pid 是 PowerShell 的唯讀自動變數（它自己的行程編號），不能拿來存別人的 pid。
+    `$oldPid = ${Number(process.pid) || 0}`,
+    "function Note($m) { if ($log) { try { Add-Content -LiteralPath $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} } }",
+    // Fill 是 updater.cjs 裡 fillTarget() 的 PowerShell 版本，兩邊順序刻意一模一樣：
+    // 只做一件事——原路徑空著的時候把它補上一個能執行的檔案。先還原舊版（這台機器上
+    // 已經證明跑得起來），再退到新版；改名優先於複製（改名不會多留一份 90 MB），
+    // 但改名需要對來源檔有 DELETE 權限而複製只要讀得到，所以最後一定要有複製這條路。
+    // 回傳 'old' / 'new' 表示補上去的是哪一個，'' 表示原路徑本來就有東西（或救不回來）。
+    // 複製那兩條路徑一律「先落到 $copy、比對長度、再改名頂上」：Copy-Item 被中斷
+    // （斷電、磁碟滿、來源被防毒抽走）會留下半截檔案，而它一樣通得過 Test-Path，
+    // 於是「原路徑上有一個能執行的檔案」這個不變式會從內部被掏空。Move 是原子的。
+    'function CopyIn($src) {',
+    '  try {',
+    '    $want = (Get-Item -LiteralPath $src).Length',
+    '    if ($want -le 0) { return $false }',
+    '    Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue',
+    '    Copy-Item -LiteralPath $src -Destination $copy -Force',
+    "    if ((Get-Item -LiteralPath $copy).Length -ne $want) { throw 'copy truncated' }",
+    '    Move-Item -LiteralPath $copy -Destination $target -Force',
+    '    return $true',
+    '  } catch {',
+    '    Remove-Item -LiteralPath $copy -Force -ErrorAction SilentlyContinue',
+    '    return $false',
+    '  }',
+    '}',
+    'function Fill {',
+    "  if (Test-Path -LiteralPath $target) { return '' }",
+    '  if (Test-Path -LiteralPath $backup) { try { Move-Item -LiteralPath $backup -Destination $target -Force } catch {} }',
+    "  if (Test-Path -LiteralPath $target) { return 'old' }",
+    '  if (Test-Path -LiteralPath $staged) { try { Move-Item -LiteralPath $staged -Destination $target -Force } catch {} }',
+    "  if (Test-Path -LiteralPath $target) { return 'new' }",
+    '  if (Test-Path -LiteralPath $staged) { $null = CopyIn $staged }',
+    "  if (Test-Path -LiteralPath $target) { return 'new' }",
+    '  if (Test-Path -LiteralPath $backup) { $null = CopyIn $backup }',
+    "  if (Test-Path -LiteralPath $target) { return 'old' }",
+    "  return ''",
+    '}',
+    // 這一行同時是「我還活著」的回報：本程序在關閉之前會等紀錄檔長出這一行。
+    "Note '換檔腳本已啟動'",
     '',
-    '# 1. 等舊程序真的結束。免安裝版的外層 launcher 會抱著 exe 不放，沒等到就換檔',
-    '#    只會換一半。這裡等不到就什麼都不做，而且刻意不去啟動舊版——',
-    '#    走到這條路表示舊程序還活著（app.quit() 被擋住或畫面卡死），',
-    '#    使用者手上有一個還開著的程式，再開一個只會被單一實例鎖踢掉。',
-    '#    $target 到這裡完全沒被動過，所以「原路徑一定有一個能跑的 exe」是成立的。',
-    `for ($i = 0; $i -lt 240; $i++) {`,
-    `  if (-not (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue)) { break }`,
+    '# 1. 等舊程序真的結束。免安裝版的外層 launcher 會抱著 exe 不放，沒等到就啟動新版',
+    '#    只會被單一實例鎖踢掉。等不到（app.quit 被卡住）就退而求其次：只換檔名、',
+    '#    不啟動也不刪東西，使用者下一次自己打開就是新版。',
+    'for ($i = 0; $i -lt 240; $i++) {',
+    '  if (-not (Get-Process -Id $oldPid -ErrorAction SilentlyContinue)) { break }',
     '  Start-Sleep -Milliseconds 500',
     '}',
-    `if (Get-Process -Id ${process.pid} -ErrorAction SilentlyContinue) { exit 1 }`,
-    'Start-Sleep -Milliseconds 800',
-    '',
-    '# 2. 新檔要還在、大小要對才動手。防毒把下載回來的檔案吃掉時就停在這裡。',
-    '#    這裡跟步驟 1 不同：舊程序已經結束了，使用者的程式剛剛在他眼前關掉。',
-    '#    什麼都不做就等於「按了更新，程式消失了」，所以一定要把舊版重新啟動。',
-    'if (-not (Test-Path -LiteralPath $staged)) {',
-    '  try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
-    '  exit 1',
-    '}',
-    'if ($size -gt 0 -and (Get-Item -LiteralPath $staged).Length -ne $size) {',
-    '  Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue',
-    '  try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
-    '  exit 1',
-    '}',
-    '',
-    '# 3. 就地換名。檔案鎖可能還沒放掉（防毒正在掃那個 90 MB 的新檔），所以要重試。',
-    '#    重試迴圈唯一要守住的不變式是：每一圈開始時 $target 一定在原地，$backup 是可丟的。',
-    '#    舊版沒守住這件事——第一圈如果「舊檔已改名、新檔還沒頂上」就失敗，',
-    '#    第二圈的 Remove-Item 會把唯一的舊 exe 刪掉，之後原路徑就永遠是空的。',
-    '$swapped = $false',
-    'for ($i = 0; $i -lt 20; $i++) {',
-    '  try {',
-    '    if (Test-Path -LiteralPath $backup) { Remove-Item -LiteralPath $backup -Force }',
-    '    Move-Item -LiteralPath $target -Destination $backup -Force',
-    '    Move-Item -LiteralPath $staged -Destination $target -Force',
-    '    $swapped = $true',
-    '    break',
-    '  } catch {',
-    '    # 失敗就先把不變式修回來，再睡一下重試。',
-    '    if (-not (Test-Path -LiteralPath $target)) {',
-    '      if (Test-Path -LiteralPath $backup) {',
-    '        try { Move-Item -LiteralPath $backup -Destination $target -Force } catch {}',
-    '      } elseif (Test-Path -LiteralPath $staged) {',
-    '        # 極端狀況：舊檔不見了、新檔還在。那就讓新檔頂上，總比原路徑空著好。',
-    '        try { Move-Item -LiteralPath $staged -Destination $target -Force; $swapped = $true } catch {}',
+    'if (Get-Process -Id $oldPid -ErrorAction SilentlyContinue) {',
+    "  Note '舊程式 120 秒內沒有結束'",
+    '  # 但是「等不到它結束」不等於「什麼都做不了」：Windows 只禁止刪除正在執行的映像，',
+    '  # 改名是准的。所以這裡照樣把檔名換好，使用者下一次打開那個檔名就是新版。',
+    '  # 這裡刻意不啟動新版——舊的還在跑，單一實例鎖會立刻把新的踢掉，那正是舊版',
+    '  # 「按了更新、什麼都沒發生」的成因之一；也不刪備份——映像還被對映著，刪不掉，',
+    '  # 留給下一次開機的清理程式。',
+    "  if ((Fill) -ne '') { Note '原路徑本來是空的，已經補回一個能執行的檔案' }",
+    '  # 主程序還在跑，而它沒有留下許可證，表示它決定自己收尾（它可能已經把新版改名',
+    '  # 成交手用的檔名了）。這時候動 $staged 只會跟它搶同一個檔案，所以到此為止。',
+    '  if (-not (Test-Path -LiteralPath $go)) {',
+    "    Note '主程式沒有留下重開許可，這一輪交還給它，腳本不再動任何檔案'",
+    '    exit 1',
+    '  }',
+    '  if ($pre) {',
+    "    Note '檔名早就在程式內換好了，使用者下次打開就是新版'",
+    '  } elseif ((Test-Path -LiteralPath $target) -and (Test-Path -LiteralPath $staged)) {',
+    '    if (($size -le 0) -or ((Get-Item -LiteralPath $staged).Length -eq $size)) {',
+    '      try {',
+    '        Move-Item -LiteralPath $target -Destination $backup -Force',
+    '        Move-Item -LiteralPath $staged -Destination $target -Force',
+    "        Note '已經把檔名換好，使用者下次打開就是新版'",
+    '      } catch {',
+    '        $null = Fill',
+    "        Note '檔名也換不了，這次更新沒有生效'",
     '      }',
     '    }',
-    '    if ($swapped) { break }',
-    '    Start-Sleep -Milliseconds 700',
     '  }',
+    '  exit 1',
     '}',
+    "Note '舊程式已結束'",
+    'Start-Sleep -Milliseconds 800',
+    '',
+    '# 2. 先把不變式修回來：原路徑上一定要有一個能執行的檔案。正常情況這裡什麼都不做，',
+    '#    只有「程式內換檔換到一半、連還原都失敗」這種極端狀況才會走到。',
+    '$filled = Fill',
+    "if ($filled -eq 'new') {",
+    "  Note '原路徑是空的，已經把新版搬上原位'",
+    '  $pre = $true',
+    "} elseif ($filled -eq 'old') {",
+    "  Note '原路徑是空的，已經把更新前的版本搬回原位'",
+    '}',
+    '',
+    '# 2.5 沒有許可證就到此為止。主程序沒關閉自己卻走到這裡，只可能是使用者照著畫面的',
+    '#     指示自己把程式關掉了——那時候新版早就被主程序改名成交手用的檔名，這裡再往下',
+    '#     走，最後那句 Start-Process 啟動的會是舊版，而且會用單一實例鎖把使用者剛剛',
+    '#     打開的新版踢掉。上面那個 Fill 仍然要先做：原路徑空著的時候本程序是最後一道',
+    '#     防線，而補檔案這件事在任何情況下都是對的。',
+    '#     許可證看完就撕掉，它只對這一輪有效。',
+    'if (-not (Test-Path -LiteralPath $go)) {',
+    "  Note '主程式沒有留下重開許可（它決定自己收尾），腳本確認過原路徑有檔案就結束'",
+    '  exit 1',
+    '}',
+    'Remove-Item -LiteralPath $go -Force -ErrorAction SilentlyContinue',
+    '',
+    '# 3. 備援換檔。$pre 為真表示換檔已經在程式內做完了，這裡一個檔案都不動——那是正常路徑。',
+    '#    真的要換的話，新檔要還在、大小要對才動手（防毒把下載回來的檔案吃掉時就停在這裡）。',
+    '#    這裡跟步驟 1 不同：舊程序已經結束了，使用者的程式剛剛在他眼前關掉，',
+    '#    什麼都不做就等於「按了更新，程式消失了」，所以每一條失敗路徑都要重新啟動原檔。',
+    '$swapped = $pre',
     'if (-not $swapped) {',
-    '  # 不變式保證這裡的 $target 還在（上面的 catch 已經修過），保險再檢查一次。',
-    '  if (-not (Test-Path -LiteralPath $target)) {',
-    '    if (Test-Path -LiteralPath $backup) {',
-    '      try { Move-Item -LiteralPath $backup -Destination $target -Force } catch {}',
-    '    } elseif (Test-Path -LiteralPath $staged) {',
-    '      try { Move-Item -LiteralPath $staged -Destination $target -Force } catch {}',
+    '  if (-not (Test-Path -LiteralPath $staged)) {',
+    "    Note '找不到新版檔案（可能被防毒移除），改回啟動原本的版本'",
+    '    try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
+    '    exit 1',
+    '  }',
+    '  if ($size -gt 0 -and (Get-Item -LiteralPath $staged).Length -ne $size) {',
+    "    Note '新版檔案大小不對（可能被防毒動過），已丟棄，改回啟動原本的版本'",
+    '    # 丟棄之前一定要先確認原路徑上有東西。原路徑空著的時候，這個大小不對的檔案',
+    '    # 就是現場唯一還剩下的材料，刪掉它等於把使用者的程式刪掉。',
+    '    if (Test-Path -LiteralPath $target) { Remove-Item -LiteralPath $staged -Force -ErrorAction SilentlyContinue }',
+    '    try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
+    '    exit 1',
+    '  }',
+    '  # 檔案鎖可能還沒放掉（防毒正在掃那個 90 MB 的新檔），所以要重試。',
+    '  # 重試迴圈唯一要守住的不變式是：每一圈開始時 $target 一定在原地，$backup 是可丟的。',
+    '  # 舊版沒守住這件事——第一圈如果「舊檔已改名、新檔還沒頂上」就失敗，',
+    '  # 第二圈的 Remove-Item 會把唯一的舊 exe 刪掉，之後原路徑就永遠是空的。',
+    '  for ($i = 0; $i -lt 20; $i++) {',
+    '    try {',
+    '      # 刪備份只是為了讓 Move 有位置放，所以原檔不在的時候絕對不能刪——那一刪',
+    '      # 就等於把唯一一個能執行的檔案毀掉，而接下來那個 Move 本來也一定會失敗。',
+    '      if ((Test-Path -LiteralPath $target) -and (Test-Path -LiteralPath $backup)) { Remove-Item -LiteralPath $backup -Force }',
+    '      Move-Item -LiteralPath $target -Destination $backup -Force',
+    '      Move-Item -LiteralPath $staged -Destination $target -Force',
+    '      $swapped = $true',
+    '      break',
+    '    } catch {',
+    '      # 失敗就先把不變式修回來，再睡一下重試。修的時候如果只剩新檔可用，',
+    '      # 那就讓新檔頂上（Fill 會回 new），換檔等於已經完成。',
+    "      if ((Fill) -eq 'new') { $swapped = $true; break }",
+    '      Start-Sleep -Milliseconds 700',
     '    }',
     '  }',
-    '  try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
-    '  exit 1',
+    "  if ((-not $swapped) -and ((Fill) -eq 'new')) { $swapped = $true }",
+    '  if (-not $swapped) {',
+    "    Note '換檔失敗（檔案可能還被鎖住），改回啟動原本的版本'",
+    '    try { Start-Process -FilePath $target -WorkingDirectory $dir } catch {}',
+    '    exit 1',
+    '  }',
+    "  Note '換檔在腳本裡完成'",
     '}',
     '',
     '# 4. 啟動新版，並用旗標握手確認它真的起來了。',
@@ -481,13 +792,16 @@ function swapScript({ target, staged, expectedSize }) {
     '$failed = $false',
     '$booted = $false',
     '$exited = $false',
-    '$grace = 24',
+    // 失敗原因要記下來再寫進紀錄檔。三種成因（新版自己結束、原路徑空了、啟動時丟例外）
+    // 的處理一樣，但事後要判斷「那次到底怎麼了」只剩紀錄檔可看，寫錯比不寫更糟。
+    "$reason = ''",
     'try {',
     '  $p = Start-Process -FilePath $target -WorkingDirectory $dir -PassThru',
     '  $havePid = ($p -ne $null)',
-    '  # 有旗標可用就等最多 60 秒（冷開機＋解壓縮＋防毒掃描是真的會慢）；',
+    "  Note '已經啟動新版，等它回報畫面載好了'",
+    '  # 有旗標可用就等最多 120 秒（冷開機＋解壓縮 190 MB＋防毒掃描是真的會慢）；',
     '  # 沒有旗標就退回舊的判定，時間也維持原本的 6 秒。',
-    '  $rounds = 120',
+    '  $rounds = 240',
     '  if (-not $useMark) { $rounds = 12 }',
     '  for ($i = 0; $i -lt $rounds; $i++) {',
     '    Start-Sleep -Milliseconds 500',
@@ -501,14 +815,18 @@ function swapScript({ target, staged, expectedSize }) {
     '      try { $code = $p.ExitCode } catch {}',
     '      if ($code -ne $null -and $code -ne 0) { break }',
     '      if (-not $useMark) { $booted = $true; break }',
-    '      # exit 0：可能是外層 launcher 交棒後自己退場，再給 12 秒等旗標消失。',
-    '      $grace = $grace - 1',
-    '      if ($grace -le 0) { break }',
+    '      # exit 0 而旗標還在：這個行程結束了，但它幾乎一定不是那個新版本身——免安裝版',
+    '      # 啟動的是外層 launcher，它解壓完就把棒子交給暫存目錄裡的內層 exe；使用者也',
+    '      # 可能自己先把新版打開了（他那一份拿著單一實例鎖，這裡啟動的第二份於是立刻',
+    '      # exit 0）。兩種情況新版都是好的，所以絕對不能因為「它結束了」就縮短等待：',
+    '      # 舊的寫法在這裡只再等 12 秒就回滾，那正好把一個好的新版靜靜地降回舊版，',
+    '      # 使用者看到的就是「更新完打開還是舊版」。改成不再問這個行程、一路等旗標。',
+    '      $havePid = $false',
     '    }',
     '  }',
-    '  if (-not $booted -and $exited) { $failed = $true }',
-    '  if (-not (Test-Path -LiteralPath $target)) { $failed = $true }',
-    '} catch { $failed = $true }',
+    "  if (-not $booted -and $exited) { $failed = $true; $reason = '新版啟動後自己結束了，沒有回報畫面載入完成' }",
+    "  if (-not (Test-Path -LiteralPath $target)) { $failed = $true; $reason = '原路徑上的檔案不見了' }",
+    "} catch { $failed = $true; $reason = '啟動新版的時候出錯了' }",
     '',
     '# 5. 失敗就回滾。這是整段腳本存在的理由：絕對不能讓使用者落到',
     '#    「新的跑不起來、舊的也不見了」。',
@@ -516,6 +834,8 @@ function swapScript({ target, staged, expectedSize }) {
     '#    就會做這件事），第二個 Move 會丟例外，而第一個 Move 早就把新檔從原檔名搬走了',
     '#    ——原路徑於是變成空的。現在每一步各自 try，最後再強制檢查原檔名有沒有東西。',
     'if ($failed) {',
+    "  Note ('新版沒有回報啟動成功（' + $reason + '），開始還原更新前的版本')",
+    '  $restored = $false',
     '  if (Test-Path -LiteralPath $backup) {',
     '    try {',
     '      if (Test-Path -LiteralPath $target) {',
@@ -523,46 +843,171 @@ function swapScript({ target, staged, expectedSize }) {
     '        Move-Item -LiteralPath $target -Destination $staged -Force',
     '      }',
     '    } catch {}',
-    '    try { Move-Item -LiteralPath $backup -Destination $target -Force } catch {}',
+    '    try { Move-Item -LiteralPath $backup -Destination $target -Force; $restored = $true } catch {}',
     '  }',
     '  # 回滾成不成功是次要的，原檔名有一個能執行的東西才是必要的。備份優先，其次是新檔。',
-    '  if (-not (Test-Path -LiteralPath $target)) {',
-    '    if (Test-Path -LiteralPath $backup) {',
-    '      try { Move-Item -LiteralPath $backup -Destination $target -Force } catch {}',
-    '    } elseif (Test-Path -LiteralPath $staged) {',
-    '      try { Move-Item -LiteralPath $staged -Destination $target -Force } catch {}',
-    '    }',
-    '  }',
+    '  $null = Fill',
     '  Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue',
-    '  try { if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target -WorkingDirectory $dir } } catch {}',
+    '  $back = $false',
+    '  try { if (Test-Path -LiteralPath $target) { Start-Process -FilePath $target -WorkingDirectory $dir; $back = $true } } catch {}',
+    "  if ($back -and $restored) { Note '已經把原路徑還原成更新前的版本並重新啟動它' } elseif ($back) { Note '沒有備份可以還原，原路徑上是剛剛下載的版本，已經重新啟動它' } else { Note '原路徑上沒有可以執行的檔案，請自己打開資料夾執行剩下的那一個' }",
     '  exit 1',
     '}',
     '',
     '# 6. 確定成功了才刪備份。旗標正常情況下已經被新版刪掉，這裡收尾以防它留著',
     '#    （留著會讓下一次開機的清理程式以為又有換檔在進行中）。',
+    '#    刪備份要等：免安裝版的外層 launcher 結束時要把 190 MB 的解壓縮目錄整個砍掉，',
+    '#    在那之前舊 exe 的映像還被對映著，Windows 不讓刪。20 秒是留給它的餘裕；',
+    '#    真的還刪不掉也沒關係——新版啟動 15 秒後會自己再清一次（confirmBootForSwap）。',
     'Remove-Item -LiteralPath $mark -Force -ErrorAction SilentlyContinue',
-    'for ($i = 0; $i -lt 12; $i++) {',
+    'for ($i = 0; $i -lt 20; $i++) {',
     '  Remove-Item -LiteralPath $backup -Force -ErrorAction SilentlyContinue',
     '  if (-not (Test-Path -LiteralPath $backup)) { break }',
-    '  Start-Sleep -Milliseconds 700',
+    '  Start-Sleep -Milliseconds 1000',
+    '}',
+    '# 紀錄要照實寫。走到這裡有兩種情況：旗標被刪掉了（新版親口回報畫面載好了，',
+    '# 這才是真的「更新完成」），或者等滿了而新版還在執行、只是沒回報——那當成成功是',
+    '# 刻意的（不跟一個正在跑的程式搶它的檔案），但不是同一件事。事後要判斷「那次到底',
+    '# 成不成」只剩這份紀錄可看，把兩者寫成同一句話等於把唯一的線索丟掉。',
+    '$done = $null',
+    "if ($booted) { $done = '更新完成' } else { $done = '新版還在執行，但沒有回報畫面載入完成（當成成功處理，沒有回滾）' }",
+    'if (Test-Path -LiteralPath $backup) {',
+    "  Note ($done + '；舊版檔案還被鎖住刪不掉，交給新版稍後再清')",
+    '} else {',
+    "  Note ($done + '；舊版檔案已經刪掉')",
     '}',
   ].join('\n');
 }
 
 /**
- * 把換檔腳本丟出去。回傳 Promise：spawn 的失敗（找不到 powershell.exe、被 AppLocker
- * 擋掉）是非同步送到 'error' 事件的，舊版沒接，於是畫面收到「即將重新啟動」、
- * 800 毫秒後程式關掉，而根本沒有人會去啟動新版。
+ * 在本程序還活著的時候就把檔名換掉。這是這次修復的核心。
+ *
+ * Windows 不准刪掉一個正在執行的映像，但是准改它的名字（載入映像時是以
+ * FILE_SHARE_DELETE 開檔的，改名又只是同一個磁碟區內的中繼資料操作）。
+ * 既然改名不必等程式結束，換檔就不必依賴任何一個外部程序照計畫執行——
+ * 這一步做完，使用者平常按的那個檔名底下就已經是驗證過的新版。後面那個
+ * PowerShell 不管被防毒擋掉、被 EDR 砍掉還是根本沒被執行，最壞的情況也只是
+ * 「要自己關掉再打開一次」，而不是舊版那種「更新完打開還是舊版、舊檔也還在」。
+ *
+ * 回傳三種狀態：
+ *   'swapped'   原路徑上已經是新版（正常結果）。
+ *   'unchanged' 原路徑上還是原本那個能執行的舊版、新版還在 .new，
+ *               交給換檔腳本在本程序結束後重試。
+ *   'broken'    原路徑上什麼都沒有。這是唯一不能接受的結果，所以要一路退到
+ *               「用複製代替改名」、再隔幾百毫秒重試，才會放棄——見 fillTarget()。
  */
-function applyUpdate(params) {
-  const encoded = Buffer.from(swapScript(params), 'utf16le').toString('base64');
+function swapInProcess({ target, staged, backup }) {
+  // 前提是「原路徑上有一個能執行的舊版」。如果不是——上一輪換檔壞在半路、或者
+  // 使用者自己把檔案搬走了——那 backup 很可能是這台機器上唯一還能執行的檔案，
+  // 絕對不能先刪掉它。這種情況要做的事只有一件：把原路徑填回來。
+  let haveTarget = false;
+  try {
+    haveTarget = fs.existsSync(target);
+  } catch {}
+  if (!haveTarget) return fillTarget({ target, staged, backup });
+  try {
+    fs.rmSync(backup, { force: true });
+  } catch {}
+  try {
+    // 這一步失敗＝防毒／備份軟體正抱著舊 exe 不放，此時什麼都還沒變。
+    fs.renameSync(target, backup);
+  } catch {
+    return 'unchanged';
+  }
+  try {
+    fs.renameSync(staged, target);
+    return 'swapped';
+  } catch {}
+  // 舊檔已經改名、新檔沒頂上：原路徑是空的。接下來唯一的目標是把它填回來。
+  return fillTarget({ target, staged, backup });
+}
+
+/**
+ * 把原路徑填回一個能執行的檔案。只在「原路徑是空的」時候呼叫。
+ *
+ * 順序是想過的：先還原舊版（那是這台機器上已經證明跑得起來的東西，而且還原之後
+ * 換檔腳本會在本程序結束後再試一次，更新照樣會完成），再退到新版。改名優先於複製，
+ * 因為改名不會留下第二份 90 MB。改名需要對來源檔有 DELETE 權限，複製只需要讀得到，
+ * 所以「防毒抱著檔案不放」這種情況下複製往往還是成立的——90 MB 複製要一兩秒，
+ * 但這條路只有在原路徑空著的時候才會走到，那個代價完全值得。
+ *
+ * 刻意不碰 backup 的殘骸、也不做任何刪除：這個函式被呼叫的時候，backup 可能是
+ * 使用者手上唯一一個能執行的檔案。
+ *
+ * 複製那一段刻意不直接寫 target：copyFileSync 不是原子的，中途斷電、磁碟滿了或
+ * 防毒把來源抽走，都會在使用者天天雙擊的那個檔名底下留一個半截的 exe。而這之後
+ * 每一個判斷（腳本的 Test-Path、下次開機的清理、fillTarget 自己）看的都只是
+ * 「檔案在不在」，於是那個半截檔會一路被當成一個能執行的程式，把「至少還有東西
+ * 能跑」這個不變式從內部掏空。所以先複製到 .copy、比對大小、再改名頂上；
+ * 改名在同一個磁碟區上是原子的，要嘛完整的檔案在那裡，要嘛原本的狀態沒變。
+ */
+function fillTarget({ target, staged, backup }) {
+  for (const [source, status] of [
+    [backup, 'unchanged'],
+    [staged, 'swapped'],
+  ]) {
+    try {
+      fs.renameSync(source, target);
+      return status;
+    } catch {}
+  }
+  const copy = target + COPY_SUFFIX;
+  for (const [source, status] of [
+    [staged, 'swapped'],
+    [backup, 'unchanged'],
+  ]) {
+    try {
+      const want = fs.statSync(source).size;
+      if (want <= 0) continue;
+      fs.rmSync(copy, { force: true });
+      fs.copyFileSync(source, copy);
+      if (fs.statSync(copy).size !== want) throw new Error('copy truncated');
+      fs.renameSync(copy, target);
+      return status;
+    } catch {
+      // 半截的複製品留在 .copy 底下沒有任何人會執行它，但還是要收掉：
+      // 90 MB 的垃圾會擋住下一輪重試的磁碟空間。
+      try {
+        fs.rmSync(copy, { force: true });
+      } catch {}
+    }
+  }
+  return 'broken';
+}
+
+/**
+ * 'broken'（原路徑上什麼都沒有）是唯一不能接受的結果，所以不要一次就放棄。
+ *
+ * 它最可能的成因是一個會自己消失的鎖：防毒正在掃那個剛下載完的 90 MB 檔案、
+ * 或備份軟體剛好在讀舊 exe。上面那一整條鏈是連續執行的，前後差幾微秒，
+ * 對「幾秒鐘的鎖」來說等於只試了一次。所以隔一段時間重試同一條鏈。
+ * 代價只有在已經出事的時候才付得到，最多兩秒。
+ */
+async function fillTargetWithRetry(paths) {
+  for (let i = 0; i < 5; i++) {
+    await new Promise((resolve) => setTimeout(resolve, 400));
+    const status = fillTarget(paths);
+    if (status !== 'broken') return status;
+  }
+  return 'broken';
+}
+
+/**
+ * 把換檔腳本丟出去。回傳 Promise：spawn 的失敗（找不到 powershell.exe、被
+ * AppLocker 擋掉）是非同步送到 'error' 事件的，舊版沒接，於是畫面收到
+ * 「即將重新啟動」、800 毫秒後程式關掉，而根本沒有人會去啟動新版。
+ *
+ * 注意：這裡 resolve 只代表「行程被建立了」，不代表它會活著做完事——
+ * 那要靠 waitForWatchdog() 等它自己回報。
+ */
+function spawnSwapWatchdog(script) {
   return new Promise((resolve, reject) => {
     let settled = false;
     let child;
     try {
       child = spawn(
         'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', encoded],
+        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script],
         { detached: true, stdio: 'ignore', windowsHide: true }
       );
     } catch (err) {
@@ -583,6 +1028,44 @@ function applyUpdate(params) {
   });
 }
 
+/**
+ * 等換檔腳本自己回報「我還活著」。
+ *
+ * 為什麼需要這一步：spawn 成功只證明行程被建立了。防毒把它當成可疑腳本砍掉、
+ * 群組原則不讓它跑、或者它一開口就出錯——這些全都發生在 spawn 之後，而舊版
+ * 在這些情況下一樣會顯示「即將重新啟動」然後關掉程式，使用者看到的就是
+ * 「按了更新，程式關掉，再打開還是舊版」。無聲的失敗是這個機制最糟的性質。
+ *
+ * 回報方式刻意選最笨的一種：腳本第一件事就是往紀錄檔追加一行，所以檔案變大
+ * 就是它活著。用不著 stdout 管線（那要留著 handle，程序一關就斷）、也用不著
+ * 另開一個 IPC。回傳 true＝確認活著，可以放心關掉自己。
+ */
+function waitForWatchdog(logFile, baseSize) {
+  return new Promise((resolve) => {
+    if (!logFile) {
+      resolve(false);
+      return;
+    }
+    const deadline = Date.now() + WATCHDOG_ALIVE_TIMEOUT_MS;
+    const poll = () => {
+      let size = -1;
+      try {
+        size = fs.statSync(logFile).size;
+      } catch {}
+      if (size > baseSize) {
+        resolve(true);
+        return;
+      }
+      if (Date.now() >= deadline) {
+        resolve(false);
+        return;
+      }
+      setTimeout(poll, WATCHDOG_POLL_MS);
+    };
+    poll();
+  });
+}
+
 /** Windows 不能刪掉還開著的檔案，所以清理前一定要先把 handle 關掉。 */
 function closeStream(file) {
   return new Promise((resolve) => {
@@ -600,12 +1083,29 @@ function closeStream(file) {
 }
 
 /**
+ * 把 fs／網路的錯誤碼換成使用者自己能處理的句子。只翻譯真的會發生、而且看得懂就
+ * 有辦法解決的那幾種；其餘照原文送——亂補一句「請稍後再試」會把唯一的線索藏起來。
+ */
+function friendlyError(err) {
+  const code = String((err && err.code) || '');
+  if (code === 'ENOSPC') return '磁碟空間不足，清出大約 200 MB 之後再試一次';
+  if (code === 'EACCES' || code === 'EPERM') {
+    return '沒有權限寫入程式所在的資料夾（可能是防毒或資料夾保護），請把程式搬到桌面或文件資料夾再試';
+  }
+  if (code === 'ETIMEDOUT' || code === 'ECONNRESET' || code === 'ECONNABORTED') return '網路中斷了，請再試一次';
+  if (code === 'ENOTFOUND' || code === 'EAI_AGAIN') return '連不到 GitHub（找不到主機），請檢查網路連線';
+  return (err && err.message) || '下載失敗';
+}
+
+/**
  * 下載新版 exe 並換檔。刻意不接受任何參數：網址、版號、大小、雜湊值全部由主程序
  * 自己向 GitHub 問。舊版是把 downloadUrl 和 version 從畫面層經 IPC 傳進來，
  * 而這個檔案下載完會被執行、版號會被接進檔名——那是不該存在的信任關係。
  * 先寫成 .part 再改名，中途斷線不會留下一個看起來正常但其實不完整的 exe。
  */
 async function downloadUpdate(sender) {
+  // 這裡只是便宜的快速失敗；真正上鎖在下面「開始碰檔案」之前，因為鎖要保護的是
+  // .part 檔和換檔流程，而不是前面這幾個純查詢。
   if (activeDownload) return { ok: false, message: '已經在下載了' };
   if (!app.isPackaged) return { ok: false, message: '開發模式不支援自動更新' };
   const target = currentExe();
@@ -637,6 +1137,16 @@ async function downloadUpdate(sender) {
   const expectedSize = Number(asset.size) || 0;
   const staged = target + NEW_SUFFIX;
   const partial = staged + PART_SUFFIX;
+  // 真正上鎖的位置：從這一行開始才會動到磁碟。上面那個查詢階段有兩次網路往返
+  // （fetchJson、後面的 httpsGet），舊寫法要等到 createWriteStream 才記下
+  // activeDownload，兩次點擊只要落在那段空窗裡就會各自開一個 write stream 寫同一個
+  // .part，最後那個檔案是兩份下載交錯的內容。這裡的檢查與賦值之間沒有 await，
+  // 單執行緒下就是原子的。
+  if (activeDownload) return { ok: false, message: '已經在下載了' };
+  activeDownload = { res: null, file: null, cancelled: false };
+  // 上一輪如果留下許可證，這一輪的腳本會拿著它去啟動它以為的新版，所以每一輪
+  // 開始前先撕掉。真正要用的時候才重新寫一張。
+  clearSwapGo(target);
   try {
     fs.rmSync(partial, { force: true });
   } catch {}
@@ -645,6 +1155,9 @@ async function downloadUpdate(sender) {
   let res = null;
   try {
     res = await httpsGet(url);
+    // 取消可能落在剛才那兩次 await 之間（那時還沒有連線可以中斷），所以連線一拿到
+    // 就先看一眼。不看的話使用者按了取消，90 MB 還是會照收。
+    if (activeDownload && activeDownload.cancelled) throw new Error(CANCELLED);
     // content-length 可能沒有（chunked），那就退回用 GitHub 給的附件大小當分母。
     const total = Number(res.headers['content-length']) || expectedSize;
     let received = 0;
@@ -652,7 +1165,12 @@ async function downloadUpdate(sender) {
     const hash = crypto.createHash('sha256');
     await new Promise((resolve, reject) => {
       file = fs.createWriteStream(partial);
-      activeDownload = { res, file };
+      // 補上 handle 而不是換一個新物件：鎖是上面那一行拿到的，換掉它就等於把
+      // 「已經有人在下載」這件事重置，也會把剛剛設好的 cancelled 旗標弄丟。
+      if (activeDownload) {
+        activeDownload.res = res;
+        activeDownload.file = file;
+      }
       res.on('data', (chunk) => {
         hash.update(chunk);
         received += chunk.length;
@@ -688,32 +1206,184 @@ async function downloadUpdate(sender) {
     fs.renameSync(partial, staged);
     sendProgress(sender, { received: written, total: written });
 
+    // 先在這裡就把檔名換好。換得成的話，原路徑上從這一刻起就是新版，
+    // 後面不管發生什麼事，使用者關掉再打開就是新版。
+    const backup = target + OLD_SUFFIX;
+    let status = swapInProcess({ target, staged, backup });
+    if (status === 'broken') {
+      // 原路徑空著是唯一不能接受的狀態，重試到補回來為止（最多兩秒）。
+      appendSwapLog('換檔中途卡住，原路徑上暫時沒有檔案，正在設法補回去');
+      status = await fillTargetWithRetry({ target, staged, backup });
+    }
+    const swapped = status === 'swapped';
+    const sizeNote = `${written} 位元組${expectedDigest ? '，雜湊已驗證' : ''}`;
+    const logFile = appendSwapLog(
+      `已下載 ${tag}（${sizeNote}）。${
+        swapped
+          ? '檔名已經換好，原路徑上現在就是新版'
+          : status === 'unchanged'
+            ? '檔名還換不了（舊檔被鎖住），交給換檔腳本重試'
+            : '原路徑上補不回檔案，只能請使用者手動處理'
+      }`
+    );
+    let baseSize = 0;
     try {
-      await applyUpdate({ target, staged, expectedSize: written });
+      if (logFile) baseSize = fs.statSync(logFile).size;
+    } catch {}
+
+    let spawnError = null;
+    // 動手之前再撕一次許可證。上面那一次在下載開始前，中間隔著可能好幾分鐘的
+    // 90 MB 下載；腳本一被啟動就開始輪詢這個檔案，它看到的東西必須是這一輪自己
+    // 掛上去的。把這個保證放在「緊接著 spawn 的前一行」，才不用靠一個幾十行前的
+    // 呼叫加上一串「中間不可能有人寫它」的推論來成立。代價是一次 rmSync。
+    clearSwapGo(target);
+    try {
+      await spawnSwapWatchdog(
+        swapScript({ target, staged, expectedSize: written, preSwapped: swapped, logFile })
+      );
     } catch (err) {
-      // 換檔腳本連起不來（找不到 powershell.exe、被群組原則或 AppLocker 擋掉）。
-      // 新版已經在硬碟上了，所以把它改成一個可以直接雙擊的檔名交給使用者，
-      // 而不是回一句「更新失敗」然後留一個 .new 在旁邊。
-      const manual = path.join(dir, localExeName(tag));
-      let handed = '';
+      spawnError = err;
+    }
+    // 只有「確認換檔腳本真的活著」才敢關掉自己。舊版是 spawn 成功就當成功，
+    // 於是腳本被防毒砍掉的時候，程式關掉了而沒有任何人接手，
+    // 使用者看到的就是「按了更新、程式關掉、再打開還是舊版，舊檔也還在」。
+    const alive = spawnError ? false : await waitForWatchdog(logFile, baseSize);
+    // 關閉自己之前的最後一個條件：許可證要真的寫進磁碟。腳本靠它分辨
+    // 「主程序自己關掉了，該接手」和「主程序還在，使用者只是手動關掉它」。
+    // 寫不成就不關——這是刻意的：不關的後果只是「請使用者自己重開一次」，
+    // 而在沒有許可證的情況下關掉，腳本會什麼都不做，畫面卻已經說了要重開。
+    const permitted = alive && status !== 'broken' ? writeSwapGo(target) : false;
+    // 不關程式的分支一律不留許可證。留著它，等使用者自己把程式關掉的那一刻，
+    // 那個還在等的腳本就會把它當成「可以動手了」。
+    if (!permitted) clearSwapGo(target);
+    // 記下這個 tag 已經處理過了。萬一 Release 的 tag 跟 exe 內建版號不一致，
+    // 下次開機才不會又提示同一版、又下載 90 MB、又重開一次。
+    //
+    // status === 'broken' 時刻意不關程式，即使腳本活著：關掉自己唯一的理由是
+    // 「讓別人有機會做我做不到的事」，而換檔腳本用的是同樣那幾個檔案操作，
+    // 剛剛已經連續失敗六次又重試五輪了。此時關掉只會把畫面上那段「該怎麼救」
+    // 的說明一起關掉，而使用者的原路徑上正好沒有東西可以再打開。
+    if (permitted) {
+      writeAppliedTag(tag);
+      appendSwapLog(
+        swapped ? '換檔腳本已回報，開始關閉舊版' : '換檔腳本已回報，剩下的換檔交給它，開始關閉舊版'
+      );
+      // 讓這次 IPC 的回應先送到畫面（顯示「即將重新啟動」），再退出。
+      setTimeout(() => app.quit(), 800);
+      // swapped 要送回畫面：檔名已經換好的時候「即將啟動新版」是確定的，
+      // 還沒換好的時候只能說「交給更新程式接手」——換檔還可能失敗，
+      // 那時腳本會啟動原本那個版本，畫面不該先把話講滿。
+      return { ok: true, restarting: true, swapped, verified: Boolean(expectedDigest) };
+    }
+
+    // 以下都是「不會自動重開」的分支。共同的鐵則：不要關掉程式。
+    // 關掉之後沒有人會接手，使用者看到的就是「按了更新，程式消失」——那正是舊版的病。
+    if (status === 'broken') {
+      // 極端狀況：改名和複製都被擋掉、隔幾百毫秒重試五輪也補不回來。
+      // 唯一還值得試一次的動作是把新版改成另一個檔名：剛剛失敗的每一步目標檔名
+      // 都是原本那個 exe，而資料夾保護與防毒的規則常常是綁在特定檔名上的，
+      // 換一個目的地是真的有機會成功。成功的話使用者就有一個能雙擊的檔案。
+      let handedBroken = '';
+      const rescue = path.join(dir, localExeName(tag));
+      if (!samePath(rescue, target)) {
+        try {
+          fs.rmSync(rescue, { force: true });
+          fs.renameSync(staged, rescue);
+          handedBroken = rescue;
+        } catch {}
+      }
+      // 剩下的只能把現場說清楚，而且要照著真的還在的檔案講——
+      // 叫使用者去執行一個不存在的檔案（或一個 .new，Windows 不會執行它）比不講更糟。
+      let haveBackup = false;
+      let haveStaged = false;
+      try {
+        haveBackup = fs.existsSync(backup);
+      } catch {}
+      try {
+        haveStaged = fs.existsSync(staged);
+      } catch {}
+      appendSwapLog(
+        `原路徑上補不回檔案（備份${haveBackup ? '還在' : '不見了'}、新版${
+          handedBroken ? `已改名成 ${path.basename(handedBroken)}` : haveStaged ? '還在 .new' : '不見了'
+        }），已請使用者手動處理`
+      );
+      // 每一條路徑都要先講「關掉這個程式」。程式有單一實例鎖：這個舊版還開著的時候
+      // 雙擊新版，新版會立刻退場並把舊視窗叫到前面，使用者看到的是「照做了卻沒變」，
+      // 於是把一個其實完好的檔案當成壞的。這裡不能自己關（關了就沒人接手了），
+      // 所以只能把順序寫進話裡。
+      const how = handedBroken
+        ? `請關掉這個程式，再到「${dir}」直接執行「${path.basename(handedBroken)}」，那是已經驗證過的新版` +
+          (haveBackup ? `；想回到更新前的狀態就把「${path.basename(backup)}」改名回「${path.basename(target)}」。` : '。')
+        : haveBackup
+          ? `請關掉這個程式，再到「${dir}」把「${path.basename(backup)}」改名回「${path.basename(target)}」` +
+            (haveStaged ? `，或者把「${path.basename(staged)}」改名成同一個檔名（那是已經驗證過的新版）。` : '。')
+          : haveStaged
+            ? `請關掉這個程式，再到「${dir}」把「${path.basename(staged)}」改名成「${path.basename(target)}」，那是已經驗證過的新版。`
+            : '請從下載頁面重新下載一份。';
+      return {
+        ok: false,
+        message: `系統不讓我改動執行檔（可能是防毒或資料夾保護），你平常按的那個檔案暫時不在原位。${how}`,
+      };
+    }
+    const why = spawnError
+      ? `無法啟動換檔程式（${spawnError.message || 'powershell.exe'}）`
+      : alive
+        ? '沒辦法在程式的資料夾裡寫入重開許可檔'
+        : '換檔程式沒有回應（可能被防毒擋掉）';
+    if (swapped) {
+      // 檔名已經換好，所以這仍然是一次成功的更新，差別只在不能自動重開。
+      writeAppliedTag(tag);
+      appendSwapLog(`${why}，但檔名已經換好了，改請使用者自己重開`);
+      return {
+        ok: true,
+        restarting: false,
+        verified: Boolean(expectedDigest),
+        message:
+          '新版已經換好了，但沒辦法自動幫你重新開啟（可能被防毒或系統原則擋掉）。' +
+          '請關掉這個程式，再打開你平常用的那個檔案，那就是新版了。',
+      };
+    }
+    // 檔名沒換成、腳本也不可靠：把新版改成一個可以直接雙擊的檔名交給使用者，
+    // 而不是回一句「更新失敗」然後留一個 .new 在旁邊。
+    const manual = path.join(dir, localExeName(tag));
+    let handed = '';
+    // manual 撞上 target 的情形是真的會發生的：使用者本來就用官方檔名跑
+    // （六月幫你顧_免安裝綠色版_v1.3.1.exe），而 tag 又剛好等於那個版號。
+    // 那時候這兩行會先刪掉他正在執行的那個檔案的路徑、再把新版改名頂上去——
+    // 前者在 Windows 上會失敗，但不該靠「剛好失敗」來保證安全。
+    if (!samePath(manual, target)) {
       try {
         fs.rmSync(manual, { force: true });
         fs.renameSync(staged, manual);
         handed = manual;
       } catch {}
-      return {
-        ok: false,
-        message: handed
-          ? `無法啟動換檔程式（${(err && err.message) || 'powershell.exe'}）。新版已經下載好放在：${handed}，請關掉這個程式後直接執行它。`
-          : `無法啟動換檔程式（${(err && err.message) || 'powershell.exe'}），請改用手動下載。`,
-      };
     }
-    // 記下這個 tag 已經送出去換檔了。萬一 Release 的 tag 跟 exe 內建版號不一致，
-    // 下次開機才不會又提示同一版、又下載 90 MB、又重開一次。
-    writeAppliedTag(tag);
-    // 讓這次 IPC 的回應先送到畫面（顯示「即將重新啟動」），再退出。
-    setTimeout(() => app.quit(), 800);
-    return { ok: true, restarting: true, verified: Boolean(expectedDigest) };
+    // 走到這裡 status 一定是 'unchanged'，也就是原路徑上是那個能執行的舊版，
+    // 所以 .old 只可能是上一輪留下的垃圾或是舊版的複本——留著它沒有任何用途，
+    // 而使用者接下來按的是另一個檔名（交手用的 exe），它的清理程式看的是自己那組
+    // 檔名，永遠不會來清這一個。現在不刪就等於永久留一份 90 MB。
+    // 刪之前還是要親眼確認原路徑上有東西：這個判斷背後是「不變式一定成立」的推論，
+    // 而備份可能是使用者手上唯一能執行的檔案，推論錯的代價太大。
+    try {
+      if (fs.existsSync(target)) fs.rmSync(backup, { force: true });
+    } catch {}
+    let stagedLeft = false;
+    try {
+      stagedLeft = fs.existsSync(staged);
+    } catch {}
+    appendSwapLog(
+      `${why}，檔名也換不了。${
+        handed ? `新版放在 ${path.basename(handed)}` : stagedLeft ? '新版還在 .new，已請使用者自己改名' : '新版不見了'
+      }`
+    );
+    return {
+      ok: false,
+      message: handed
+        ? `${why}。新版已經下載好放在：${handed}，請關掉這個程式後直接執行它。`
+        : stagedLeft
+          ? `${why}。新版已經下載好放在「${staged}」，請關掉這個程式後把檔名結尾的「.new」去掉，再打開它。`
+          : `${why}，請改用手動下載。`,
+    };
   } catch (err) {
     activeDownload = null;
     // 連線也要斷，不只是關檔案。磁碟寫滿時只關檔案的話，socket 會繼續把 90 MB
@@ -729,7 +1399,7 @@ async function downloadUpdate(sender) {
     return {
       ok: false,
       cancelled,
-      message: cancelled ? '已取消下載' : (err && err.message) || '下載失敗',
+      message: cancelled ? '已取消下載' : friendlyError(err),
     };
   }
 }
@@ -737,13 +1407,21 @@ async function downloadUpdate(sender) {
 /**
  * 取消。先把連線斷掉再關檔案 handle，順序不能反：Windows 上檔案還開著就刪不掉，
  * 而連線沒斷的話 pipe 會繼續往一個正在關的 stream 寫。
+ *
+ * 這裡刻意不把 activeDownload 設成 null——那把鎖由下載流程自己在結束時放掉。
+ * 如果取消時就把它清掉，而取消又發生在「已經上鎖、但連線還沒建立」的查詢階段
+ * （按下更新到連上 GitHub 之間），下載流程醒來後會看不到自己的鎖，也就看不到
+ * cancelled 旗標，於是照樣把 90 MB 收完、照樣換檔、照樣重開——使用者按了取消，
+ * 程式卻自己更新完重開了。所以取消只做兩件事：立旗標、拆掉現有的 handle。
+ * 換檔階段（鎖已經放掉）呼叫這個函式會回 false，那也是對的：檔名都換好了，
+ * 這時候沒有「取消」可言。
  */
 async function cancelDownload() {
   const current = activeDownload;
   if (!current) return false;
-  activeDownload = null;
+  current.cancelled = true;
   try {
-    current.res.destroy(new Error(CANCELLED));
+    if (current.res) current.res.destroy(new Error(CANCELLED));
   } catch {}
   await closeStream(current.file);
   return true;
@@ -772,6 +1450,20 @@ function registerUpdateHandlers(ipcMain) {
       return false;
     }
   });
+  // 更新紀錄。換檔的後半段發生在程式關掉之後，畫面層再也收不到任何東西，
+  // 所以那段過程只存在這個純文字檔裡。開它不需要參數：路徑由主程序自己算，
+  // 畫面層沒有機會指定要開哪個檔案。
+  ipcMain.handle('open-update-log', async () => {
+    const file = swapLogPath();
+    if (!file) return false;
+    try {
+      if (!fs.existsSync(file)) return false;
+      const err = await shell.openPath(file);
+      return !err;
+    } catch {
+      return false;
+    }
+  });
 }
 
 module.exports = {
@@ -785,4 +1477,11 @@ module.exports = {
   hostAllowed,
   releasePageAllowed,
   pickExeAsset,
+  // 匯出給測試用：換檔腳本的文字內容要能被檢查（不能有雙引號、括號要成對），
+  // 換檔本身也要能在假的檔案系統上跑一遍。
+  swapScript,
+  swapInProcess,
+  fillTarget,
+  // 匯出給測試用：許可證的檔名後綴要能在模擬裡對得上。
+  SWAP_GO_SUFFIX,
 };
