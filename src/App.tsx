@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Target, TargetGroup, MatchResult, MatchLogEntry, GlobalSettings, AppConfig, UserAccount, ImageComboRule, CooldownTimer, Rect } from './types';
+import type { MouseAction } from './electron-api';
 import { Navbar } from './components/Navbar';
 import { LiveStreamViewer } from './components/LiveStreamViewer';
 import { TargetList } from './components/TargetList';
@@ -960,7 +961,10 @@ export default function App() {
 
   const performMappedClick = useCallback(
     async (
-      action: string,
+      // string 會讓任何字串都能被接進去，而這個值最後會被拼進一段寫給常駐
+      // PowerShell 的指令。主程序仍然會再比對一次白名單，這裡用聯集型別讓
+      // 「送了一個不存在的動作」在編譯期就過不去。
+      action: MouseAction,
       frameX: number,
       frameY: number,
       frameW: number,

@@ -13,9 +13,12 @@
 //      舊的做法把「換檔」和「重開」一起外包出去，於是腳本一失敗就兩件事都沒發生：
 //      程式自己關掉、新版沒開、舊版還在原地——而且沒有任何紀錄。
 //   3. 因此外面那個腳本只剩一件事：等本程序結束 → 啟動新版 → 確認它起得來 → 刪備份。
-//      而且要先證明它自己活著（在紀錄檔寫下第一行）本程序才會 quit。spawn 成功只代表
-//      行程被建立，防毒把它砍掉的時候 spawn 一樣會成功。等不到就不要關程式，改成請
-//      使用者自己關掉再打開——那句話一定成立，因為檔案已經換好了。
+//      而且要先證明它自己活著（建立 <exe>.alive）本程序才會 quit。spawn 成功不算證明：
+//      行程被建立和「它真的執行了第一行」是兩件事，防毒把它砍掉、或者 spawn 的旗標
+//      讓 powershell 拿不到 console（真的發生過，見 WATCHDOG_SPAWN），spawn 一樣會成功。
+//      等不到就不要關程式，改成請使用者自己關掉再打開——那句話一定成立，因為檔案
+//      已經換好了。存活回報刻意用獨立的檔案而不是紀錄檔變大：紀錄檔兼差當存活通道的
+//      時候，「腳本沒被執行」和「腳本活著但寫不進那個資料夾」會長得一模一樣。
 //      「新版真的啟動起來」同樣要正向證據：腳本建立 <exe>.updating，新版把主視窗的
 //      畫面載完之後才把它刪掉。判定失敗就把 .old 搬回原檔名並啟動它。
 //      不變式只有一條，但必須永遠成立：任何一步失敗之後，原本那個路徑上都還要有
@@ -62,6 +65,12 @@ const SWAP_MARK_SUFFIX = '.updating';
 // 啟動的是舊版，還會用單一實例鎖把使用者剛剛打開的新版踢掉。那正是
 // 「更新完打開還是舊版」的其中一條路徑。
 const SWAP_GO_SUFFIX = '.relaunch';
+// 「我還活著」的專用回報檔。以前這件事是靠紀錄檔變大來回答的，那是一個設計缺陷：
+// 同一個檔案同時當診斷紀錄和存活通道，於是「腳本根本沒被執行」和「腳本活著但寫不進
+// 那個資料夾」在設計上無法分辨——而後者的寫入還包在一個無聲的 catch {} 裡。
+// 拆成獨立的檔案之後，紀錄檔可以繼續是給人看的散文，存活通道則只有一個語意：
+// 這個檔案出現＝PowerShell 真的執行了第一行。
+const SWAP_ALIVE_SUFFIX = '.alive';
 // 更新過程的純文字紀錄，放在 exe 旁邊（不是 userData）——出問題的時候使用者要找得到它、
 // 打得開、寄得出來。程式關掉之後的每一步都只剩這裡看得到。
 const SWAP_LOG_FILENAME = '六月幫你顧-更新紀錄.txt';
@@ -437,12 +446,20 @@ function cleanupLeftovers() {
   if (fs.existsSync(exe + SWAP_MARK_SUFFIX)) return removed;
   // .relaunch 也在這裡清掉：它只在「這一輪主程序決定關閉」的那幾百毫秒內有意義，
   // 留到下一輪就變成一張過期的許可證，會讓下一次的換檔腳本以為可以動手。
+  // .alive 同理，而且更嚴格：它是「腳本活著」的唯一證據，一份上一輪留下來的
+  // 就足以讓下一輪在腳本根本沒被執行的情況下判定它活著，然後放心關掉程式。
+  // 真正的防線在 spawn 前那一次 clearSwapAlive()，這裡只是收尾。
+  //
+  // %TEMP% 那份存活回報檔刻意不放進這張清單：它的檔名只有 exe 的檔名，同一台機器上
+  // 兩份同名的複本會共用它，於是「A 開機」就會刪掉「B 正在等的那份回報」。用來換的
+  // 只是一個 23 位元組的殘留物，而且下一輪 spawn 前照樣會被撕掉、名字相同也不會累積。
   for (const file of [
     exe + NEW_SUFFIX + PART_SUFFIX,
     exe + NEW_SUFFIX,
     exe + OLD_SUFFIX,
     exe + COPY_SUFFIX,
     exe + SWAP_GO_SUFFIX,
+    exe + SWAP_ALIVE_SUFFIX,
   ]) {
     try {
       if (!fs.existsSync(file)) continue;
@@ -595,6 +612,57 @@ function clearSwapGo(target) {
 }
 
 /**
+ * 存活回報檔的兩個位置：exe 旁邊那份是主程序真正在等的，%TEMP% 那份是資料夾不給寫
+ * 的時候唯一還留得下來的證據。
+ *
+ * 用 process.env.TEMP 而不是 os.tmpdir() 或 app.getPath('temp')：子行程繼承的是同一份
+ * 環境變數，所以這裡算出來的資料夾和那個腳本身處的 %TEMP% 一定是同一個。沒有 TEMP
+ * 的機器（很少，但存在）就回傳空字串，腳本那邊會自動跳過——退路不成立不該讓主線失敗。
+ */
+function swapAlivePaths(target) {
+  const beside = target + SWAP_ALIVE_SUFFIX;
+  const tmp = process.env.TEMP || process.env.TMP || '';
+  if (!tmp) return { app: beside, temp: '', log: '' };
+  try {
+    return {
+      app: beside,
+      temp: path.join(tmp, path.basename(target) + SWAP_ALIVE_SUFFIX),
+      log: path.join(tmp, SWAP_LOG_FILENAME),
+    };
+  } catch {
+    return { app: beside, temp: '', log: '' };
+  }
+}
+
+/**
+ * 送出腳本之前先把兩個回報檔刪掉。這一步不是收拾整潔，是正確性：這個檔案存在
+ * 就是「腳本活著」，而主程序看到它活著就會關掉自己。上一輪留下來的一份因此足以
+ * 讓下一輪在腳本根本沒被執行的情況下關掉程式——那正是舊版那個「按了更新、程式
+ * 關掉、再打開還是舊版」的無聲失敗。跟 clearSwapGo() 一樣，這件事要緊貼在 spawn
+ * 的前一行做，才不必靠「中間不可能有人寫它」的推論來成立。
+ *
+ * 回傳「確認已經不存在」的那幾個路徑，因為刪除本身可能失敗（檔案被另一個行程抱著、
+ * 資料夾不給刪）。刪不掉的那一份不能繼續當通道：它待會兒出現在 existsSync 裡的時候，
+ * 「腳本剛剛寫的」和「上一輪留下來的」分不出來，而分不出來就等於沒有證據。少一個
+ * 通道最壞的後果是請使用者自己重開一次（那句話永遠成立），信一個假通道的後果是
+ * 程式默默關掉而沒有人接手。
+ */
+function clearSwapAlive(paths) {
+  const gone = { app: '', temp: '' };
+  for (const key of ['app', 'temp']) {
+    const file = paths[key];
+    if (!file) continue;
+    try {
+      fs.rmSync(file, { force: true });
+    } catch {}
+    try {
+      if (!fs.existsSync(file)) gone[key] = file;
+    } catch {}
+  }
+  return gone;
+}
+
+/**
  * 換檔腳本。它只負責「本程序結束之後」的事：啟動新版、確認起得來、刪備份，
  * 必要時回滾。換檔本身已經在 swapInProcess() 做完了（preSwapped 為 true 時），
  * 這裡的換檔分支只是備援——留著是因為 Windows 偶爾真的會拒絕改名（防毒正在掃那個
@@ -610,10 +678,30 @@ function clearSwapGo(target) {
  * 而失敗必須被看見、被處理，不能被吞掉繼續往下走（舊版就是這樣才會在新版沒啟動的
  * 情況下把舊檔刪掉）。
  */
-function swapScript({ target, staged, expectedSize, preSwapped, logFile }) {
+function swapScript({
+  target,
+  staged,
+  expectedSize,
+  preSwapped,
+  logFile,
+  aliveFile,
+  aliveTempFile,
+  logTempFile,
+}) {
   const dir = path.dirname(target);
   return [
     "$ErrorActionPreference = 'Stop'",
+    // 整段腳本的第一件事：回報「PowerShell 真的執行到了這一行」。這件事必須有一個
+    // 只有這一個意思的通道，不能跟給人看的紀錄檔共用——共用的時候「根本沒被執行」
+    // 和「執行了但寫不進那個資料夾」會長得一模一樣（兩邊都是紀錄檔沒變大），
+    // 而這兩件事該做的處置完全相反。兩個位置都寫：exe 旁邊那個是主程序真正在等的，
+    // %TEMP% 那個是資料夾不給寫時的證據——它出現就表示腳本是活的。
+    `$alive = ${psQuote(aliveFile || '')}`,
+    `$aliveTmp = ${psQuote(aliveTempFile || '')}`,
+    `$logTmp = ${psQuote(logTempFile || '')}`,
+    "function Alive($p) { if ($p) { try { [System.IO.File]::WriteAllText($p, (Get-Date -Format 'yyyy-MM-dd HH:mm:ss.fff')) } catch {} } }",
+    'Alive $alive',
+    'Alive $aliveTmp',
     `$target = ${psQuote(target)}`,
     `$staged = ${psQuote(staged)}`,
     `$backup = ${psQuote(target + OLD_SUFFIX)}`,
@@ -633,7 +721,9 @@ function swapScript({ target, staged, expectedSize, preSwapped, logFile }) {
     `$pre = $${preSwapped ? 'true' : 'false'}`,
     // $pid 是 PowerShell 的唯讀自動變數（它自己的行程編號），不能拿來存別人的 pid。
     `$oldPid = ${Number(process.pid) || 0}`,
-    "function Note($m) { if ($log) { try { Add-Content -LiteralPath $log -Value ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m) -Encoding UTF8 } catch {} } }",
+    // 紀錄一行。寫不進 exe 旁邊那份就退到 %TEMP%——原本這裡只有一個無聲的 catch {}，
+    // 於是「資料夾不給寫」這種狀況會讓整段更新變成一片空白，事後完全無從查起。
+    "function Note($m) { $line = ((Get-Date -Format 'yyyy-MM-dd HH:mm:ss') + '  ' + $m); if ($log) { try { Add-Content -LiteralPath $log -Value $line -Encoding UTF8; return } catch {} } if ($logTmp) { try { Add-Content -LiteralPath $logTmp -Value $line -Encoding UTF8 } catch {} } }",
     // Fill 是 updater.cjs 裡 fillTarget() 的 PowerShell 版本，兩邊順序刻意一模一樣：
     // 只做一件事——原路徑空著的時候把它補上一個能執行的檔案。先還原舊版（這台機器上
     // 已經證明跑得起來），再退到新版；改名優先於複製（改名不會多留一份 90 MB），
@@ -668,7 +758,8 @@ function swapScript({ target, staged, expectedSize, preSwapped, logFile }) {
     "  if (Test-Path -LiteralPath $target) { return 'old' }",
     "  return ''",
     '}',
-    // 這一行同時是「我還活著」的回報：本程序在關閉之前會等紀錄檔長出這一行。
+    // 給人看的第一行。存活的判定已經交給上面那兩個 Alive 了，這一行的作用是讓
+    // 使用者寄回來的紀錄檔有一個明確的起點。
     "Note '換檔腳本已啟動'",
     '',
     '# 1. 等舊程序真的結束。免安裝版的外層 launcher 會抱著 exe 不放，沒等到就啟動新版',
@@ -993,6 +1084,34 @@ async function fillTargetWithRetry(paths) {
 }
 
 /**
+ * 換檔腳本的啟動條件。獨立成一個常數是為了讓驗證程式能對著「真的會被交給 spawn 的
+ * 那個物件」下斷言，而不是去 grep 原始碼——這一行的錯誤剛剛花掉三個版本才找到。
+ *
+ * 為什麼沒有 detached: true（2026-09-03 用兩支探針在他那台機器上逐位量出來的）：
+ * libuv 把 detached:true 翻成 DETACHED_PROCESS(0x8) | CREATE_NEW_PROCESS_GROUP(0x200)，
+ * 子行程因此完全沒有 console，而 Windows PowerShell 5.1 的 ConsoleHost 在這種狀態下
+ * 乾淨地結束、結束碼 0、約 100 毫秒、一句話都不執行。MSDN 明寫 CREATE_NO_WINDOW 與
+ * DETACHED_PROCESS 併用時會被忽略，所以 windowsHide:true 救不了它。實測（父行程是
+ * 真的 GUI 子系統、GetConsoleWindow() 回報 no console，跟本程序同一種狀態）：
+ *   0x8000608（含 DETACHED）→ 等 8 秒，觀察檔完全沒有被建立，一句話都沒跑到
+ *   0x8000400（本設定）    → 父行程死掉之後 500 毫秒就看到腳本的回報
+ *   0x8000400 + 子行程睡 6 秒 → 父行程死了 6.25 秒之後它還活著並繼續寫檔
+ * 最後那一項是重點：Node 文件說「Windows 上要讓子行程活過父行程就要 detached」，
+ * 在這個情境下不成立——會連坐殺子行程的是 Job 物件，而 DETACHED_PROCESS 本來就
+ * 逃不出 Job（那要 CREATE_BREAKAWAY_FROM_JOB），所以拿掉它不可能讓存活變差。
+ *
+ * 也拿掉了 -WindowStyle Hidden：同一批實測證明沒有它一樣不會閃視窗（windowsHide
+ * 已經給了 CREATE_NO_WINDOW），而 powershell -WindowStyle Hidden 是防毒啟發式規則裡
+ * 最常見的樣態之一。理由跟當初把 -EncodedCommand 換成 -Command 一樣：這個機制唯一
+ * 一種無聲的失敗就是 powershell 被靜靜地砍掉，能少一個嫌疑特徵就少一個。
+ */
+const WATCHDOG_SPAWN = {
+  file: 'powershell.exe',
+  args: ['-NoProfile', '-NonInteractive', '-Command'],
+  options: { stdio: 'ignore', windowsHide: true },
+};
+
+/**
  * 把換檔腳本丟出去。回傳 Promise：spawn 的失敗（找不到 powershell.exe、被
  * AppLocker 擋掉）是非同步送到 'error' 事件的，舊版沒接，於是畫面收到
  * 「即將重新啟動」、800 毫秒後程式關掉，而根本沒有人會去啟動新版。
@@ -1006,9 +1125,9 @@ function spawnSwapWatchdog(script) {
     let child;
     try {
       child = spawn(
-        'powershell.exe',
-        ['-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-Command', script],
-        { detached: true, stdio: 'ignore', windowsHide: true }
+        WATCHDOG_SPAWN.file,
+        [...WATCHDOG_SPAWN.args, script],
+        WATCHDOG_SPAWN.options
       );
     } catch (err) {
       reject(err);
@@ -1017,6 +1136,8 @@ function spawnSwapWatchdog(script) {
     child.once('spawn', () => {
       if (settled) return;
       settled = true;
+      // 不 unref 的話，這個子行程會把 Node 的事件迴圈綁住；它要活到本程序結束之後，
+      // 所以不能讓它反過來決定本程序什麼時候能結束。
       child.unref();
       resolve();
     });
@@ -1036,28 +1157,50 @@ function spawnSwapWatchdog(script) {
  * 在這些情況下一樣會顯示「即將重新啟動」然後關掉程式，使用者看到的就是
  * 「按了更新，程式關掉，再打開還是舊版」。無聲的失敗是這個機制最糟的性質。
  *
- * 回報方式刻意選最笨的一種：腳本第一件事就是往紀錄檔追加一行，所以檔案變大
- * 就是它活著。用不著 stdout 管線（那要留著 handle，程序一關就斷）、也用不著
- * 另開一個 IPC。回傳 true＝確認活著，可以放心關掉自己。
+ * 回報方式刻意選最笨的一種：腳本第一件事就是建立一個空的小檔案，檔案出現就是它
+ * 活著。用不著 stdout 管線（那要留著 handle，程序一關就斷）、也用不著另開一個 IPC。
+ *
+ * 三個通道分開回報，因為它們對應到三種不同的處置：
+ *   'app'  exe 旁邊的回報檔出現了——一切正常。
+ *   'temp' 只有 %TEMP% 那份出現——腳本是活的，但它寫不進程式的資料夾，
+ *          所以待會兒那張重開許可證大概也寫不進去，話要照這件事講。
+ *   'log'  兩個回報檔都沒有，但紀錄檔長大了——舊版腳本的通道，留著當保險。
+ *   ''     完全沒有回報。這時候絕對不能關掉程式。
  */
-function waitForWatchdog(logFile, baseSize) {
+function waitForWatchdog({ logFile, baseSize, aliveFile, aliveTempFile }) {
   return new Promise((resolve) => {
-    if (!logFile) {
-      resolve(false);
+    if (!aliveFile && !aliveTempFile && !logFile) {
+      resolve('');
       return;
     }
     const deadline = Date.now() + WATCHDOG_ALIVE_TIMEOUT_MS;
+    const there = (file) => {
+      if (!file) return false;
+      try {
+        return fs.existsSync(file);
+      } catch {
+        return false;
+      }
+    };
     const poll = () => {
+      if (there(aliveFile)) {
+        resolve('app');
+        return;
+      }
+      if (there(aliveTempFile)) {
+        resolve('temp');
+        return;
+      }
       let size = -1;
       try {
-        size = fs.statSync(logFile).size;
+        if (logFile) size = fs.statSync(logFile).size;
       } catch {}
       if (size > baseSize) {
-        resolve(true);
+        resolve('log');
         return;
       }
       if (Date.now() >= deadline) {
-        resolve(false);
+        resolve('');
         return;
       }
       setTimeout(poll, WATCHDOG_POLL_MS);
@@ -1232,14 +1375,28 @@ async function downloadUpdate(sender) {
     } catch {}
 
     let spawnError = null;
-    // 動手之前再撕一次許可證。上面那一次在下載開始前，中間隔著可能好幾分鐘的
-    // 90 MB 下載；腳本一被啟動就開始輪詢這個檔案，它看到的東西必須是這一輪自己
-    // 掛上去的。把這個保證放在「緊接著 spawn 的前一行」，才不用靠一個幾十行前的
-    // 呼叫加上一串「中間不可能有人寫它」的推論來成立。代價是一次 rmSync。
+    const alivePaths = swapAlivePaths(target);
+    // 動手之前再撕一次許可證與存活回報檔。上面那一次在下載開始前，中間隔著可能好幾
+    // 分鐘的 90 MB 下載；腳本一被啟動就開始輪詢許可證，而主程序等的是回報檔，兩邊
+    // 看到的東西都必須是這一輪自己產生的。把這個保證放在「緊接著 spawn 的前一行」，
+    // 才不用靠一個幾十行前的呼叫加上一串「中間不可能有人寫它」的推論來成立。
     clearSwapGo(target);
+    // 腳本收到的是完整的兩個路徑（它兩份都要試著寫），主程序只看「剛剛確認清空過」
+    // 的那幾個。兩邊不對稱是刻意的：寫得到就寫，但只有這一輪自己清出來的空位
+    // 再度出現，才算得上證據。
+    const aliveWatch = clearSwapAlive(alivePaths);
     try {
       await spawnSwapWatchdog(
-        swapScript({ target, staged, expectedSize: written, preSwapped: swapped, logFile })
+        swapScript({
+          target,
+          staged,
+          expectedSize: written,
+          preSwapped: swapped,
+          logFile,
+          aliveFile: alivePaths.app,
+          aliveTempFile: alivePaths.temp,
+          logTempFile: alivePaths.log,
+        })
       );
     } catch (err) {
       spawnError = err;
@@ -1247,7 +1404,21 @@ async function downloadUpdate(sender) {
     // 只有「確認換檔腳本真的活著」才敢關掉自己。舊版是 spawn 成功就當成功，
     // 於是腳本被防毒砍掉的時候，程式關掉了而沒有任何人接手，
     // 使用者看到的就是「按了更新、程式關掉、再打開還是舊版，舊檔也還在」。
-    const alive = spawnError ? false : await waitForWatchdog(logFile, baseSize);
+    const aliveVia = spawnError
+      ? ''
+      : await waitForWatchdog({
+          logFile,
+          baseSize,
+          aliveFile: aliveWatch.app,
+          aliveTempFile: aliveWatch.temp,
+        });
+    const alive = Boolean(aliveVia);
+    // 回報檔只回答「你活著嗎」這一個問題，問完就該消失，否則它會變成下一輪的假證據。
+    // 刪不掉也不影響正確性：下一輪 spawn 前還會再撕一次，開機時 cleanupLeftovers() 也會清。
+    clearSwapAlive(alivePaths);
+    if (aliveVia === 'temp') {
+      appendSwapLog('換檔腳本只在 %TEMP% 回報得了，表示它寫不進程式所在的資料夾');
+    }
     // 關閉自己之前的最後一個條件：許可證要真的寫進磁碟。腳本靠它分辨
     // 「主程序自己關掉了，該接手」和「主程序還在，使用者只是手動關掉它」。
     // 寫不成就不關——這是刻意的：不關的後果只是「請使用者自己重開一次」，
@@ -1325,11 +1496,16 @@ async function downloadUpdate(sender) {
         message: `系統不讓我改動執行檔（可能是防毒或資料夾保護），你平常按的那個檔案暫時不在原位。${how}`,
       };
     }
+    // 這句話會被貼進使用者看得到的訊息裡，所以只能講量到的事實。
+    // 舊版在這裡寫「可能被防毒擋掉」——那是一句猜測，而且在他那台機器上是錯的
+    // （即時防護關閉、受控資料夾存取 0 條、ASR 0 條，腳本卻一句都沒執行；
+    // 真正的原因是 spawn 的旗標讓 powershell 拿不到 console）。錯的歸因比沒有歸因
+    // 更貴：使用者會去關防毒、去問防毒廠商，而那條路上沒有答案。
     const why = spawnError
       ? `無法啟動換檔程式（${spawnError.message || 'powershell.exe'}）`
       : alive
         ? '沒辦法在程式的資料夾裡寫入重開許可檔'
-        : '換檔程式沒有回應（可能被防毒擋掉）';
+        : '換檔程式沒有在時限內回報';
     if (swapped) {
       // 檔名已經換好，所以這仍然是一次成功的更新，差別只在不能自動重開。
       writeAppliedTag(tag);
@@ -1339,7 +1515,7 @@ async function downloadUpdate(sender) {
         restarting: false,
         verified: Boolean(expectedDigest),
         message:
-          '新版已經換好了，但沒辦法自動幫你重新開啟（可能被防毒或系統原則擋掉）。' +
+          '新版已經換好了，但沒辦法自動幫你重新開啟。' +
           '請關掉這個程式，再打開你平常用的那個檔案，那就是新版了。',
       };
     }
@@ -1484,4 +1660,16 @@ module.exports = {
   fillTarget,
   // 匯出給測試用：許可證的檔名後綴要能在模擬裡對得上。
   SWAP_GO_SUFFIX,
+  SWAP_ALIVE_SUFFIX,
+  // 匯出給測試用：spawn 的條件是這整個機制唯一一個「錯了就完全無聲」的地方
+  // （detached:true 讓 powershell 拿不到 console，於是它結束碼 0、一句話都不執行）。
+  // 匯出真正會被交給 spawn 的那個物件，驗證程式才能對著它下斷言，而不是去 grep 原始碼。
+  // spawnSwapWatchdog 也要匯出：常數是對的但函式沒有用它，是這種驗證最典型的漏法。
+  WATCHDOG_SPAWN,
+  spawnSwapWatchdog,
+  waitForWatchdog,
+  swapAlivePaths,
+  // 清空回報檔的那一步會回報「哪幾個確認清空了」，主程序只信那幾個。
+  // 這個關係錯了就會退回無聲失敗，所以它也要有斷言看著。
+  clearSwapAlive,
 };

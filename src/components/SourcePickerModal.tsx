@@ -1,13 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { AppWindow, Monitor, RefreshCw, Search, X, Sparkles, CheckCircle2 } from 'lucide-react';
+import type { DesktopSource } from '../electron-api';
 
-export interface DesktopSource {
-  id: string;
-  name: string;
-  thumbnail: string; // Base64 image
-  appIcon?: string | null;
-  isScreen?: boolean;
-}
+// DesktopSource 的定義搬到 src/electron-api.d.ts 了：它本來就是 get-desktop-sources
+// 的回傳形狀，放在一個對話框裡等於讓橋的形狀有兩份描述。名字繼續從這裡往外送，
+// 原本從這個檔案匯入它的地方不用改。
+export type { DesktopSource };
 
 interface SourcePickerModalProps {
   isOpen: boolean;
@@ -28,7 +26,7 @@ export const SourcePickerModal: React.FC<SourcePickerModalProps> = ({
   const fetchSources = async () => {
     setIsLoading(true);
     try {
-      const electronAPI = (window as unknown as { electronAPI?: { getDesktopSources: () => Promise<DesktopSource[]> } }).electronAPI;
+      const electronAPI = window.electronAPI;
       if (electronAPI && typeof electronAPI.getDesktopSources === 'function') {
         const list = await electronAPI.getDesktopSources();
         setSources(list || []);

@@ -1,4 +1,9 @@
 @import "tailwindcss";
+/* Tailwind 4 會掃整個專案樹，包括 tools/ 裡的 Python 工具。verpatch.py 的註解裡出現過
+   「table」這個字，於是輸出的 CSS 就憑空多出一條沒有任何畫面用到的 .table{display:table}。
+   以前的權宜做法是打包前把 tools/ 移走，但那讓「乾淨 clone 重建出來的 CSS」跟出貨的不一樣，
+   等於放棄了「同一份原始碼一定編出同一份 dist」這個可驗證性。這一行才是正解。 */
+@source not "../tools";
 
 html.floating-mode,
 body.floating-mode,

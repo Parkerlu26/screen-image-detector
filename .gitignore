@@ -24,3 +24,5 @@ server/wrangler.toml
 .DS_Store
 .antigravity/
 scratch/
+# codegraph 的 SQLite 索引，是本機工具重建得出來的產物
+.codegraph/

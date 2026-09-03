@@ -1,54 +1,18 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, FileText } from 'lucide-react';
+import type { ElectronAPI, UpdateInfo } from '../electron-api';
 
-/** main process 回傳的檢查結果。刻意沒有 downloadUrl：畫面層不需要知道，也不該
- *  有機會影響下載來源——那個檔案下載完會被當成程式本身執行。 */
-export interface UpdateInfo {
-  ok: boolean;
-  currentVersion: string;
-  latestVersion?: string;
-  hasUpdate?: boolean;
-  title?: string;
-  notes?: string;
-  publishedAt?: string;
-  pageUrl?: string;
-  downloadSize?: number;
-  /** 有 exe 附件、是打包版、找得到自己的 exe、資料夾可寫，四者都成立才能一鍵更新。 */
-  canAutoUpdate?: boolean;
-  /** 這個附件有 GitHub 提供的 sha256 可以驗證。 */
-  verifiable?: boolean;
-  /** 這個版本已經換過檔了，但版號還是沒進步——再更新一次也會是同樣結果。 */
-  staleRetry?: boolean;
-  message?: string;
-}
+// UpdateInfo 的定義搬到 src/electron-api.d.ts 了（那裡是整座橋的唯一描述），
+// 這裡繼續往外送同一個名字，原本從這個檔案匯入它的地方不用改。
+export type { UpdateInfo };
 
-interface UpdateApi {
-  checkForUpdate?: () => Promise<UpdateInfo>;
-  downloadUpdate?: () => Promise<{
-    ok: boolean;
-    message?: string;
-    cancelled?: boolean;
-    /** true＝主程序馬上會關掉自己並啟動新版；false＝檔案已經換好，但要使用者自己重開。 */
-    restarting?: boolean;
-    /**
-     * 檔名是不是已經換好了。restarting 為 true 時這兩件事仍然是分開的：
-     * 換好了＝關掉之後啟動的一定是新版；還沒換好＝關掉之後由更新程式接手換檔，
-     * 而換檔還可能失敗（那時它會把原本的版本重新啟動）。畫面要照實說。
-     */
-    swapped?: boolean;
-  }>;
-  cancelUpdateDownload?: () => Promise<boolean>;
-  openReleasePage?: (url?: string) => Promise<boolean>;
-  /** 打開更新紀錄檔。換檔的後半段發生在程式關掉之後，只留在那個檔案裡。 */
-  openUpdateLog?: () => Promise<boolean>;
-  onUpdateDownloadProgress?: (
-    cb: (data: { received: number; total: number }) => void
-  ) => () => void;
-}
-
-/** 沒有 electronAPI（例如瀏覽器預覽）時全部功能自動退場，不會拋錯。 */
-export const updateApi = (): UpdateApi | undefined =>
-  (window as unknown as { electronAPI?: UpdateApi }).electronAPI;
+/**
+ * 沒有 electronAPI（例如瀏覽器預覽）時全部功能自動退場，不會拋錯。
+ *
+ * 以前這裡自己寫了一份縮小版的介面再 `as unknown as` 轉型過去，於是同一座橋有兩份
+ * 互不相干的描述：改了 preload 只有其中一份會跟著錯，另一份繼續說謊。
+ */
+export const updateApi = (): ElectronAPI | undefined => window.electronAPI;
 
 export const SKIPPED_VERSION_KEY = 'june_skipped_update_version';
 
@@ -259,8 +223,8 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
 
               {info.staleRetry && (
                 <p className="text-sm text-amber-300">
-                  上一次已經下載並嘗試更新過這個版本，但重開之後版號沒有變。可能是那次換檔沒成功
-                  （檔案被佔用或被防毒擋掉），也可能是發布時版號沒更新。可以再試一次，或先到下載頁面確認。
+                  上一次已經下載並嘗試更新過這個版本，但重開之後版號沒有變。可能是那次換檔沒成功，
+                  也可能是發布時版號沒更新。更新紀錄檔裡會寫下上次停在哪一步；可以再試一次，或先到下載頁面確認。
                 </p>
               )}
 
@@ -332,8 +296,9 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
               </button>
             )}
             {/* 換檔的後半段發生在程式關掉之後，畫面收不到任何回報，所以出問題時
-                一定要給他一個入口去看那份紀錄。 */}
-            {(error || handoff) && updateApi()?.openUpdateLog && (
+                一定要給他一個入口去看那份紀錄。staleRetry 也算「出問題」：那個狀態的
+                意思就是上一輪關掉之後的那一半沒有成功，而它唯一留下的證據就在那份紀錄裡。 */}
+            {(error || handoff || info?.staleRetry) && updateApi()?.openUpdateLog && (
               <button
                 onClick={() => void updateApi()?.openUpdateLog?.()}
                 className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
