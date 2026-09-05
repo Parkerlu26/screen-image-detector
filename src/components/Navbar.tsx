@@ -6,16 +6,13 @@ import {
   Play,
   Download,
   Upload,
-  Settings as SettingsIcon,
+  Settings2,
   Volume2,
   VolumeX,
-  Crosshair,
   Users,
   LogOut,
   Shield,
   User,
-  Sparkles,
-  Layers,
 } from 'lucide-react';
 import { GlobalSettings, UserAccount } from '../types';
 
@@ -37,6 +34,16 @@ interface NavbarProps {
   activeTab: 'detect' | 'automation';
   onChangeTab: (tab: 'detect' | 'automation') => void;
 }
+
+/**
+ * 暫停中的按鈕。components.css 沒有「填滿琥珀色」這種變體，而深色字壓在 --warn 上
+ * 淺色模式會讀不出來（淺色的 --warn 是 #7d5606），所以走 .tag.warn 那套描邊＋淡底。
+ */
+const PAUSED_TINT: React.CSSProperties = {
+  color: 'var(--warn)',
+  borderColor: 'rgba(242,201,76,.35)',
+  background: 'rgba(242,201,76,.12)',
+};
 
 export const Navbar: React.FC<NavbarProps> = ({
   isStreamActive,
@@ -69,186 +76,151 @@ export const Navbar: React.FC<NavbarProps> = ({
   };
 
   return (
-    <header className="bg-slate-950 border-b border-slate-800 px-4 lg:px-6 py-3 sticky top-0 z-40 shadow-xl shrink-0">
-      <div className="w-full mx-auto flex flex-wrap items-center justify-between gap-3">
-        {/* Brand & Title */}
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-white shadow-lg shadow-emerald-950/50">
-            <Crosshair className="w-5 h-5" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-base font-bold text-white tracking-tight">
-                六月幫你顧
-              </h1>
-            </div>
-            <p className="text-[11px] text-slate-400 hidden sm:block">
-              視窗螢幕即時圖像偵測與自動提醒系統
-            </p>
-          </div>
-        </div>
+    <header className="nav">
+      {/* 第一欄故意留空：名字已經在標題列置中，分段控制才是這一列的主角 */}
+      <div
+        className="seg nav-tabs"
+        role="tablist"
+        style={{ '--n': 2, '--i': activeTab === 'detect' ? 0 : 1 } as React.CSSProperties}
+      >
+        <div className="seg-thumb" />
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'detect'}
+          onClick={() => onChangeTab('detect')}
+        >
+          <span className="emo">🎯</span>
+          即時圖像辨識
+        </button>
+        <button
+          type="button"
+          role="tab"
+          aria-selected={activeTab === 'automation'}
+          onClick={() => onChangeTab('automation')}
+        >
+          <span className="emo">⚡</span>
+          進階聯動 ＆ 計時器
+        </button>
+      </div>
 
-        {/* Center Navigation Tabs */}
-        <div className="flex items-center gap-1 bg-slate-900/90 p-1 rounded-xl border border-slate-800 text-xs font-bold">
-          <button
-            type="button"
-            onClick={() => onChangeTab('detect')}
-            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'detect'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Crosshair className="w-3.5 h-3.5" />
-            🎯 即時圖像辨識
-          </button>
-          <button
-            type="button"
-            onClick={() => onChangeTab('automation')}
-            className={`px-3.5 py-1.5 rounded-lg transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeTab === 'automation'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white hover:bg-slate-800'
-            }`}
-          >
-            <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-            ⚡ 進階聯動 ＆ 計時器
-          </button>
-        </div>
-
-        {/* Right Controls */}
-        <div className="flex items-center gap-2 flex-wrap">
-          {/* Stream Capture Controls */}
-          {isStreamActive ? (
-            <>
-              {/* Pause / Resume Button */}
-              <button
-                type="button"
-                onClick={onTogglePause}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold transition-all shadow-md cursor-pointer ${
-                  isPaused
-                    ? 'bg-amber-500 hover:bg-amber-400 text-slate-950 shadow-amber-950/40 animate-pulse'
-                    : 'bg-slate-800 hover:bg-slate-700 text-amber-300 border border-slate-700'
-                }`}
-                title={isPaused ? '點擊繼續偵測' : '點擊暫停偵測'}
-              >
-                {isPaused ? <Play className="w-3.5 h-3.5" /> : <Pause className="w-3.5 h-3.5" />}
-                {isPaused ? '繼續' : '暫停'}
-              </button>
-
-              <button
-                type="button"
-                onClick={onStopCapture}
-                className="flex items-center gap-1.5 px-3.5 py-1.5 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-md shadow-rose-950/40 cursor-pointer"
-              >
-                <VideoOff className="w-3.5 h-3.5" />
-                停止擷取
-              </button>
-            </>
-          ) : (
+      <div className="tools">
+        {/* 擷取控制：沒開串流時只有一顆主要動作，開了之後換成暫停＋停止 */}
+        {isStreamActive ? (
+          <>
             <button
               type="button"
-              onClick={onStartCapture}
-              className="flex items-center gap-1.5 px-4 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 cursor-pointer"
+              onClick={onTogglePause}
+              className={`btn ico-only${isPaused ? ' animate-pulse' : ''}`}
+              style={isPaused ? PAUSED_TINT : undefined}
+              aria-label={isPaused ? '繼續偵測' : '暫停偵測'}
+              title={isPaused ? '點擊繼續偵測' : '點擊暫停偵測'}
             >
-              <Video className="w-3.5 h-3.5" />
-              開始擷取視窗
+              {isPaused ? <Play /> : <Pause />}
             </button>
-          )}
 
-          {/* Quick Sound Mute Toggle */}
-          <button
-            type="button"
-            onClick={() => onUpdateSettings({ ...settings, enableAudio: !settings.enableAudio })}
-            className={`p-2 rounded-xl border transition-all cursor-pointer ${
-              settings.enableAudio
-                ? 'bg-slate-800 text-emerald-400 border-slate-700 hover:bg-slate-700'
-                : 'bg-rose-500/10 text-rose-400 border-rose-500/30'
-            }`}
-            title={settings.enableAudio ? '提示音效已開啟 (點擊靜音)' : '已靜音 (點擊開啟音效)'}
-          >
-            {settings.enableAudio ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
-          </button>
-
-          {/* Import / Export JSON */}
-          <input
-            type="file"
-            ref={fileInputRef}
-            onChange={handleFileChange}
-            accept=".json"
-            className="hidden"
-          />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors cursor-pointer"
-            title="匯入目標設定檔 (JSON)"
-          >
-            <Upload className="w-4 h-4" />
-          </button>
-
-          <button
-            type="button"
-            onClick={onExportConfig}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors cursor-pointer"
-            title="匯出備份目前設定 (JSON)"
-          >
-            <Download className="w-4 h-4" />
-          </button>
-
-          {/* User Management Button (For Admin) */}
-          {currentUser && currentUser.role === 'admin' && onOpenUserManagement && (
             <button
               type="button"
-              onClick={onOpenUserManagement}
-              className="relative flex items-center gap-1 px-3 py-1.5 rounded-xl bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/40 text-xs font-bold transition-all cursor-pointer"
-              title="開啟使用者審核管理後台"
+              onClick={onStopCapture}
+              className="btn danger ico-only"
+              aria-label="停止擷取"
+              title="停止擷取畫面"
             >
-              <Users className="w-3.5 h-3.5 text-indigo-400" />
-              <span>使用者管理</span>
-              {pendingUsersCount > 0 && (
-                <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-              )}
+              <VideoOff />
             </button>
-          )}
+          </>
+        ) : (
+          <button type="button" onClick={onStartCapture} className="btn pri" title="選擇要監看的視窗或螢幕">
+            <Video />
+            開始擷取視窗
+          </button>
+        )}
 
-          {/* Settings Modal Toggle */}
+        <span className="navsep" />
+
+        {/* 靜音快速切換 */}
+        <button
+          type="button"
+          onClick={() => onUpdateSettings({ ...settings, enableAudio: !settings.enableAudio })}
+          className="btn ghost ico-only"
+          style={settings.enableAudio ? undefined : { color: 'var(--bad)' }}
+          aria-label={settings.enableAudio ? '提示音效已開啟 (點擊靜音)' : '已靜音 (點擊開啟音效)'}
+          title={settings.enableAudio ? '提示音效已開啟 (點擊靜音)' : '已靜音 (點擊開啟音效)'}
+        >
+          {settings.enableAudio ? <Volume2 /> : <VolumeX />}
+        </button>
+
+        {/* 匯入／匯出設定檔。n3＝頂列擠不下時最先讓位的一組 */}
+        <input type="file" ref={fileInputRef} onChange={handleFileChange} accept=".json" className="hide" />
+        <button
+          type="button"
+          onClick={() => fileInputRef.current?.click()}
+          className="btn ghost ico-only n3"
+          aria-label="匯入目標設定檔 (JSON)"
+          title="匯入目標設定檔 (JSON)"
+        >
+          <Upload />
+        </button>
+        <button
+          type="button"
+          onClick={onExportConfig}
+          className="btn ghost ico-only n3"
+          aria-label="匯出備份目前設定 (JSON)"
+          title="匯出備份目前設定 (JSON)"
+        >
+          <Download />
+        </button>
+
+        {/* 使用者管理（僅管理員）。待審筆數改由角落的點表示 */}
+        {currentUser && currentUser.role === 'admin' && onOpenUserManagement && (
           <button
             type="button"
-            onClick={onOpenSettings}
-            className="p-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl border border-slate-700 transition-colors cursor-pointer"
-            title="全域設定"
+            onClick={onOpenUserManagement}
+            className="btn ghost ico-only"
+            style={{ position: 'relative' }}
+            aria-label={`使用者管理${pendingUsersCount > 0 ? `（${pendingUsersCount} 筆待處理）` : ''}`}
+            title={`開啟使用者審核管理後台${pendingUsersCount > 0 ? `（${pendingUsersCount} 筆待處理）` : ''}`}
           >
-            <SettingsIcon className="w-4 h-4" />
+            <Users />
+            {pendingUsersCount > 0 && <span className="dotbadge" />}
           </button>
+        )}
 
-          {/* Current User Pill & Logout */}
-          {currentUser && (
-            <div className="flex items-center gap-1.5 pl-1.5 border-l border-slate-800">
-              <div className="flex items-center gap-1 bg-slate-900 px-2 py-1 rounded-lg border border-slate-800 text-[11px] text-slate-300">
-                {currentUser.role === 'admin' ? (
-                  <Shield className="w-3 h-3 text-indigo-400" />
-                ) : (
-                  <User className="w-3 h-3 text-slate-400" />
-                )}
-                <span className="font-bold text-white max-w-[80px] truncate">
-                  {currentUser.displayName || currentUser.username}
-                </span>
-              </div>
+        <button
+          type="button"
+          onClick={onOpenSettings}
+          className="btn ghost ico-only"
+          aria-label="全域設定"
+          title="全域設定"
+        >
+          <Settings2 />
+        </button>
 
-              {onLogout && (
-                <button
-                  type="button"
-                  onClick={onLogout}
-                  className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                  title="登出帳號"
-                >
-                  <LogOut className="w-3.5 h-3.5" />
-                </button>
+        {currentUser && (
+          <>
+            <span className="navsep" />
+            <div className="who" title={currentUser.role === 'admin' ? '目前登入：管理員' : '目前登入的帳號'}>
+              {currentUser.role === 'admin' ? (
+                <Shield style={{ color: 'var(--acc-txt)' }} />
+              ) : (
+                <User />
               )}
+              <b>{currentUser.displayName || currentUser.username}</b>
             </div>
-          )}
-        </div>
+
+            {onLogout && (
+              <button
+                type="button"
+                onClick={onLogout}
+                className="btn ghost ico-only"
+                aria-label="登出帳號"
+                title="登出帳號"
+              >
+                <LogOut />
+              </button>
+            )}
+          </>
+        )}
       </div>
     </header>
   );

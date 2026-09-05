@@ -403,7 +403,16 @@ function createWindow() {
     minWidth: 1024,
     minHeight: 680,
     title: '六月幫你顧',
-    backgroundColor: '#020617',
+    // 開窗那一瞬間畫面還沒畫出來，這個色就是那一格的底色，跟 tokens.css 的 --bg 一致。
+    backgroundColor: '#08090a',
+    /**
+     * 標題列自己畫（App 裡的 TitleBar 元件），但縮小／放大／關閉三顆仍然交給 Windows：
+     * 'hidden' + titleBarOverlay 保留了 Snap Layouts（滑到放大鈕上出現的排版選單）與
+     * 系統的按鈕行為，而 frame:false 會把這些一起弄丟，得自己用 IPC 重做一份殘缺的。
+     * 這裡先給深色的值；使用者選淺色時由畫面層呼叫 set-title-bar-overlay 換掉。
+     */
+    titleBarStyle: 'hidden',
+    titleBarOverlay: { color: '#08090a', symbolColor: '#9ca3ad', height: 32 },
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -593,6 +602,29 @@ function createWindow() {
       floatingWindow.setSize(w, h);
     }
     return true;
+  });
+
+  /**
+   * 換深淺主題時重畫 Windows 那三顆原生按鈕。
+   *
+   * 收的是「送出請求的那個視窗」而不是 mainWindow：懸浮視窗載的是同一份畫面程式，
+   * 開機套用外觀時也會走到這裡，而它是無邊框的（沒有 setTitleBarOverlay 可呼叫）。
+   * 那種情況回 false 就好，不是錯誤。顏色只收 #rrggbb，免得把奇怪的字串餵進原生 API。
+   */
+  ipcMain.handle('set-title-bar-overlay', async (event, options) => {
+    try {
+      const win = BrowserWindow.fromWebContents(event.sender);
+      if (!win || win.isDestroyed() || typeof win.setTitleBarOverlay !== 'function') return false;
+      const hex = /^#[0-9a-fA-F]{6}$/;
+      const color = options && options.color;
+      const symbolColor = options && options.symbolColor;
+      if (!hex.test(color || '') || !hex.test(symbolColor || '')) return false;
+      win.setTitleBarOverlay({ color, symbolColor, height: 32 });
+      return true;
+    } catch (err) {
+      // 無邊框視窗會丟例外（Electron 只允許 titleBarStyle 為 hidden 的視窗改這個）。
+      return false;
+    }
   });
 
   // Sync timers across windows

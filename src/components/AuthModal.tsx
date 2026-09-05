@@ -28,19 +28,13 @@ interface AuthModalProps {
   notice?: string;
 }
 
-const INPUT_CLASS =
-  'w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3.5 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 transition-colors disabled:opacity-50';
+type AuthTab = 'login' | 'register' | 'activate';
 
-const SMALL_INPUT_CLASS =
-  'w-full bg-slate-950 border border-slate-700/80 rounded-xl px-3 py-2 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500 disabled:opacity-50';
-
-const TAB_CLASS = (active: boolean): string =>
-  `py-2 rounded-lg font-bold transition-all flex items-center justify-center gap-1.5 cursor-pointer ${
-    active ? 'bg-emerald-600 text-white shadow-md' : 'text-slate-400 hover:text-white hover:bg-slate-900'
-  }`;
+/** .seg 的滑塊靠 --i 定位，跟頂列的分頁同一套做法（不是三顆各自上色的按鈕）。 */
+const TAB_INDEX: Record<AuthTab, number> = { login: 0, register: 1, activate: 2 };
 
 export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLoginSuccess, notice }) => {
-  const [tab, setTab] = useState<'login' | 'register' | 'activate'>('login');
+  const [tab, setTab] = useState<AuthTab>('login');
   const [busy, setBusy] = useState(false);
 
   // 登入
@@ -68,7 +62,7 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLoginSuccess, no
 
   const backendReady = isBackendConfigured();
 
-  const switchTab = (next: 'login' | 'register' | 'activate') => {
+  const switchTab = (next: AuthTab) => {
     setTab(next);
     setErrorMsg(null);
     setSuccessMsg(null);
@@ -166,294 +160,324 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLoginSuccess, no
   };
 
   return (
-    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-950/90 backdrop-blur-md p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700/80 rounded-2xl w-full max-w-md shadow-2xl overflow-hidden flex flex-col animate-in fade-in zoom-in-95 duration-200">
-        {/* Modal Header */}
-        <div className="p-6 pb-4 text-center bg-gradient-to-b from-slate-950 to-slate-900 border-b border-slate-800">
-          <div className="w-14 h-14 rounded-2xl bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-emerald-400 mx-auto mb-3 shadow-lg shadow-emerald-950/50">
-            <ShieldCheck className="w-7 h-7" />
+    // 登入視窗蓋在所有 modal 之上（其餘 60、更新視窗 70）：沒登入就什麼都不能做，
+    // 所以它也是唯一沒有關閉鈕、沒有 footer 的視窗。
+    <div className="scrim" style={{ zIndex: 100 }}>
+      <div
+        className="modal"
+        style={{ '--mw': '448px' } as React.CSSProperties}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="auth-title"
+      >
+        <header className="hero">
+          <div className="mtile">
+            <ShieldCheck />
           </div>
-          <h2 className="text-lg font-bold text-white tracking-wide">六月幫你顧</h2>
-          <p className="text-xs text-slate-400 mt-1">視窗螢幕即時圖像偵測與自動提醒系統</p>
-          <p className="text-[11px] text-slate-500 mt-1.5 flex items-center justify-center gap-1">
-            <Cloud className="w-3 h-3" />
-            帳號為雲端帳號，同一組帳密可在多台電腦登入
-          </p>
+          <div className="htxt">
+            <h3 id="auth-title">六月幫你顧</h3>
+            <p className="tagline">視窗螢幕即時圖像偵測與自動提醒系統</p>
+            <p className="cloud">
+              <Cloud />
+              帳號為雲端帳號，同一組帳密可在多台電腦登入
+            </p>
+          </div>
 
-          <div className="grid grid-cols-3 gap-1 bg-slate-950 p-1 rounded-xl mt-4 border border-slate-800 text-xs">
-            <button type="button" onClick={() => switchTab('login')} className={TAB_CLASS(tab === 'login')}>
-              <LogIn className="w-3.5 h-3.5" />
+          <div
+            className="seg"
+            role="tablist"
+            style={{ '--n': 3, '--i': TAB_INDEX[tab] } as React.CSSProperties}
+          >
+            <div className="seg-thumb" />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'login'}
+              onClick={() => switchTab('login')}
+            >
+              <LogIn />
               帳號登入
             </button>
-            <button type="button" onClick={() => switchTab('register')} className={TAB_CLASS(tab === 'register')}>
-              <UserPlus className="w-3.5 h-3.5" />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'register'}
+              onClick={() => switchTab('register')}
+            >
+              <UserPlus />
               註冊帳號
             </button>
-            <button type="button" onClick={() => switchTab('activate')} className={TAB_CLASS(tab === 'activate')}>
-              <Key className="w-3.5 h-3.5" />
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tab === 'activate'}
+              onClick={() => switchTab('activate')}
+            >
+              <Key />
               輸入開通碼
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* 沒設定後端網址就直接講清楚，不要讓使用者一直試登入 */}
-        {!backendReady && (
-          <div className="mx-6 mt-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-            <div className="flex-1">{BACKEND_MISSING_MESSAGE}</div>
-          </div>
-        )}
-
-        {notice && !errorMsg && (
-          <div className="mx-6 mt-4 p-3 bg-amber-500/10 border border-amber-500/30 rounded-xl text-xs text-amber-200 flex items-start gap-2">
-            <AlertCircle className="w-4 h-4 shrink-0 text-amber-400 mt-0.5" />
-            <div className="flex-1">{notice}</div>
-          </div>
-        )}
-
-        {errorMsg && (
-          <div className="mx-6 mt-4 p-3 bg-rose-500/10 border border-rose-500/30 rounded-xl text-xs text-rose-300 flex items-start gap-2 animate-in fade-in">
-            <AlertCircle className="w-4 h-4 shrink-0 text-rose-400 mt-0.5" />
-            <div className="flex-1">{errorMsg}</div>
-          </div>
-        )}
-
-        {successMsg && (
-          <div className="mx-6 mt-4 p-3 bg-emerald-500/10 border border-emerald-500/30 rounded-xl text-xs text-emerald-300 flex items-start gap-2 animate-in fade-in">
-            <CheckCircle2 className="w-4 h-4 shrink-0 text-emerald-400 mt-0.5" />
-            <div className="flex-1">{successMsg}</div>
-          </div>
-        )}
-
-        {/* ── TAB 1: 帳號登入 ── */}
-        {tab === 'login' && (
-          <form onSubmit={handleLoginSubmit} className="p-6 space-y-4">
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-slate-400" />
-                帳號名稱
-              </label>
-              <input
-                type="text"
-                value={username}
-                onChange={(e) => setUsername(e.target.value)}
-                placeholder="請輸入帳號"
-                className={INPUT_CLASS}
-                disabled={busy}
-                autoFocus
-              />
+        <div className="body">
+          {/* 沒設定後端網址就直接講清楚，不要讓使用者一直試登入 */}
+          {!backendReady && (
+            <div className="banner bad">
+              <AlertCircle />
+              <p>{BACKEND_MISSING_MESSAGE}</p>
             </div>
+          )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-slate-400" />
-                帳號密碼
-              </label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="請輸入密碼"
-                className={INPUT_CLASS}
-                disabled={busy}
-              />
+          {notice && !errorMsg && (
+            <div className="banner warn">
+              <AlertCircle />
+              <p>{notice}</p>
             </div>
+          )}
 
-            {showMasterKey ? (
-              <div className="space-y-1.5 p-3.5 bg-slate-950 rounded-xl border border-indigo-500/40 animate-in fade-in">
-                <label className="text-xs font-bold text-indigo-300 flex items-center gap-1.5">
-                  <KeyRound className="w-3.5 h-3.5 text-indigo-400" />
-                  管理員安全金鑰 (Master Key)
+          {errorMsg && (
+            <div className="banner bad">
+              <AlertCircle />
+              <p>{errorMsg}</p>
+            </div>
+          )}
+
+          {successMsg && (
+            <div className="banner ok">
+              <CheckCircle2 />
+              <p>{successMsg}</p>
+            </div>
+          )}
+
+          {/* ── TAB 1: 帳號登入 ── */}
+          {tab === 'login' && (
+            <form onSubmit={handleLoginSubmit} className="form stack">
+              <div className="fgroup">
+                <label htmlFor="auth-username">
+                  <User />
+                  帳號名稱
                 </label>
                 <input
+                  id="auth-username"
+                  type="text"
+                  className="field lg"
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  placeholder="請輸入帳號"
+                  disabled={busy}
+                  autoFocus
+                />
+              </div>
+
+              <div className="fgroup">
+                <label htmlFor="auth-password">
+                  <Lock />
+                  帳號密碼
+                </label>
+                <input
+                  id="auth-password"
                   type="password"
-                  value={masterKey}
-                  onChange={(e) => setMasterKey(e.target.value)}
-                  placeholder="僅管理員需要填寫"
-                  className="w-full bg-slate-900 border border-indigo-500/50 rounded-lg px-3 py-2 text-xs text-indigo-200 placeholder-slate-500 focus:outline-none disabled:opacity-50"
+                  className="field lg"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="請輸入密碼"
                   disabled={busy}
                 />
-                <p className="text-[10px] text-slate-400">
-                  🔒 金鑰保存在伺服器端，程式檔案裡不含任何金鑰，反編譯也拿不到。
+              </div>
+
+              {showMasterKey ? (
+                <div className="fbox">
+                  <div className="fgroup">
+                    <label htmlFor="auth-master">
+                      <KeyRound />
+                      管理員安全金鑰 (Master Key)
+                    </label>
+                    <input
+                      id="auth-master"
+                      type="password"
+                      className="field lg"
+                      value={masterKey}
+                      onChange={(e) => setMasterKey(e.target.value)}
+                      placeholder="僅管理員需要填寫"
+                      disabled={busy}
+                    />
+                    <p className="hint">金鑰保存在伺服器端，程式檔案裡不含任何金鑰，反編譯也拿不到。</p>
+                  </div>
+                </div>
+              ) : (
+                <button
+                  type="button"
+                  className="btn mini"
+                  style={{ justifySelf: 'start' }}
+                  onClick={() => setShowMasterKey(true)}
+                >
+                  <KeyRound />
+                  我是管理員（需輸入安全金鑰）
+                </button>
+              )}
+
+              <button type="submit" className="btn pri wide" disabled={busy || !backendReady}>
+                {busy ? <Loader2 className="animate-spin" /> : <LogIn />}
+                {busy ? '驗證中…' : '確認登入'}
+              </button>
+            </form>
+          )}
+
+          {/* ── TAB 2: 註冊新帳號 ── */}
+          {tab === 'register' && (
+            <form onSubmit={handleRegisterSubmit} className="form stack">
+              <div className="fgroup">
+                <label htmlFor="reg-username">
+                  <User />
+                  欲註冊之帳號 <b className="req">*</b>
+                </label>
+                <input
+                  id="reg-username"
+                  type="text"
+                  className="field lg"
+                  value={regUsername}
+                  onChange={(e) => setRegUsername(e.target.value)}
+                  placeholder="英文、數字或 _ . -（至少 3 碼）"
+                  disabled={busy}
+                />
+              </div>
+
+              <div className="fgrid">
+                <div className="fgroup">
+                  <label htmlFor="reg-password">
+                    <Lock />
+                    設定密碼 <b className="req">*</b>
+                  </label>
+                  <input
+                    id="reg-password"
+                    type="password"
+                    className="field lg"
+                    value={regPassword}
+                    onChange={(e) => setRegPassword(e.target.value)}
+                    placeholder="至少 6 碼"
+                    disabled={busy}
+                  />
+                </div>
+                <div className="fgroup">
+                  <label htmlFor="reg-confirm">
+                    <Lock />
+                    確認密碼 <b className="req">*</b>
+                  </label>
+                  <input
+                    id="reg-confirm"
+                    type="password"
+                    className="field lg"
+                    value={regConfirm}
+                    onChange={(e) => setRegConfirm(e.target.value)}
+                    placeholder="再次輸入密碼"
+                    disabled={busy}
+                  />
+                </div>
+              </div>
+
+              <div className="fgroup">
+                <label htmlFor="reg-nick">顯示暱稱 (選填)</label>
+                <input
+                  id="reg-nick"
+                  type="text"
+                  className="field lg"
+                  value={regDisplayName}
+                  onChange={(e) => setRegDisplayName(e.target.value)}
+                  placeholder="例如：小明"
+                  disabled={busy}
+                />
+              </div>
+
+              <div className="fgroup">
+                <label htmlFor="reg-code">
+                  <Key />
+                  開通碼 (選填)
+                </label>
+                <input
+                  id="reg-code"
+                  type="text"
+                  className="field lg code"
+                  value={regCode}
+                  onChange={(e) => setRegCode(e.target.value.toUpperCase())}
+                  placeholder="例如：JUNE-7K3M-P2QX-9WD4"
+                  disabled={busy}
+                />
+                <p className="hint">
+                  有開通碼就直接填，註冊完可立刻登入；沒有的話送出後由管理員審核開通。
                 </p>
               </div>
-            ) : (
-              <button
-                type="button"
-                onClick={() => setShowMasterKey(true)}
-                className="text-[11px] text-slate-500 hover:text-indigo-300 transition-colors cursor-pointer flex items-center gap-1"
-              >
-                <KeyRound className="w-3 h-3" />
-                我是管理員（需輸入安全金鑰）
+
+              <button type="submit" className="btn pri wide" disabled={busy || !backendReady}>
+                {busy ? <Loader2 className="animate-spin" /> : <UserPlus />}
+                {busy ? '送出中…' : '送出註冊'}
               </button>
-            )}
+            </form>
+          )}
 
-            <button
-              type="submit"
-              disabled={busy || !backendReady}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:hover:bg-emerald-600 text-white rounded-xl text-sm font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer mt-2"
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogIn className="w-4 h-4" />}
-              {busy ? '驗證中…' : '確認登入'}
-            </button>
-          </form>
-        )}
+          {/* ── TAB 3: 用開通碼自助開通 ── */}
+          {tab === 'activate' && (
+            <form onSubmit={handleActivateSubmit} className="form stack">
+              <div className="fbox">
+                <p>已經註冊、但還在等待審核或使用期限到了，可以在這裡輸入管理員給的開通碼直接開通或續期。</p>
+              </div>
 
-        {/* ── TAB 2: 註冊新帳號 ── */}
-        {tab === 'register' && (
-          <form onSubmit={handleRegisterSubmit} className="p-6 space-y-3.5">
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-slate-400" />
-                欲註冊之帳號 <span className="text-rose-400">*</span>
-              </label>
-              <input
-                type="text"
-                value={regUsername}
-                onChange={(e) => setRegUsername(e.target.value)}
-                placeholder="英文、數字或 _ . -（至少 3 碼）"
-                className={SMALL_INPUT_CLASS}
-                disabled={busy}
-              />
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-slate-400" />
-                  設定密碼 <span className="text-rose-400">*</span>
+              <div className="fgroup">
+                <label htmlFor="act-username">
+                  <User />
+                  帳號名稱
                 </label>
                 <input
+                  id="act-username"
+                  type="text"
+                  className="field lg"
+                  value={actUsername}
+                  onChange={(e) => setActUsername(e.target.value)}
+                  placeholder="請輸入已註冊的帳號"
+                  disabled={busy}
+                  autoFocus
+                />
+              </div>
+
+              <div className="fgroup">
+                <label htmlFor="act-password">
+                  <Lock />
+                  帳號密碼
+                </label>
+                <input
+                  id="act-password"
                   type="password"
-                  value={regPassword}
-                  onChange={(e) => setRegPassword(e.target.value)}
-                  placeholder="至少 6 碼"
-                  className={SMALL_INPUT_CLASS}
+                  className="field lg"
+                  value={actPassword}
+                  onChange={(e) => setActPassword(e.target.value)}
+                  placeholder="用來確認是你本人"
                   disabled={busy}
                 />
               </div>
-              <div className="space-y-1">
-                <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                  <Lock className="w-3.5 h-3.5 text-slate-400" />
-                  確認密碼 <span className="text-rose-400">*</span>
+
+              <div className="fgroup">
+                <label htmlFor="act-code">
+                  <Key />
+                  管理員給的開通碼
                 </label>
                 <input
-                  type="password"
-                  value={regConfirm}
-                  onChange={(e) => setRegConfirm(e.target.value)}
-                  placeholder="再次輸入密碼"
-                  className={SMALL_INPUT_CLASS}
+                  id="act-code"
+                  type="text"
+                  className="field lg code"
+                  value={actCode}
+                  onChange={(e) => setActCode(e.target.value.toUpperCase())}
+                  placeholder="例如：JUNE-7K3M-P2QX-9WD4"
                   disabled={busy}
                 />
               </div>
-            </div>
 
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300">顯示暱稱 (選填)</label>
-              <input
-                type="text"
-                value={regDisplayName}
-                onChange={(e) => setRegDisplayName(e.target.value)}
-                placeholder="例如：小明"
-                className={SMALL_INPUT_CLASS}
-                disabled={busy}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-amber-300 flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                開通碼 (選填)
-              </label>
-              <input
-                type="text"
-                value={regCode}
-                onChange={(e) => setRegCode(e.target.value.toUpperCase())}
-                placeholder="例如：JUNE-7K3M-P2QX-9WD4"
-                className="w-full bg-slate-950 border border-amber-500/40 rounded-xl px-3 py-2 text-xs text-amber-200 font-mono placeholder-slate-500 focus:outline-none disabled:opacity-50"
-                disabled={busy}
-              />
-              <p className="text-[10px] text-slate-500 leading-relaxed">
-                有開通碼就直接填，註冊完可立刻登入；沒有的話送出後由管理員審核開通。
-              </p>
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy || !backendReady}
-              className="w-full py-3 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg shadow-emerald-950/50 flex items-center justify-center gap-2 cursor-pointer mt-2"
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <UserPlus className="w-4 h-4" />}
-              {busy ? '送出中…' : '送出註冊'}
-            </button>
-          </form>
-        )}
-
-        {/* ── TAB 3: 用開通碼自助開通 ── */}
-        {tab === 'activate' && (
-          <form onSubmit={handleActivateSubmit} className="p-6 space-y-3.5">
-            <p className="text-[11px] text-slate-400 leading-relaxed p-3 bg-slate-950 rounded-xl border border-slate-800">
-              已經註冊、但還在等待審核或使用期限到了，可以在這裡輸入管理員給的開通碼直接開通或續期。
-            </p>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <User className="w-3.5 h-3.5 text-slate-400" />
-                帳號名稱
-              </label>
-              <input
-                type="text"
-                value={actUsername}
-                onChange={(e) => setActUsername(e.target.value)}
-                placeholder="請輸入已註冊的帳號"
-                className={SMALL_INPUT_CLASS}
-                disabled={busy}
-                autoFocus
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <Lock className="w-3.5 h-3.5 text-slate-400" />
-                帳號密碼
-              </label>
-              <input
-                type="password"
-                value={actPassword}
-                onChange={(e) => setActPassword(e.target.value)}
-                placeholder="用來確認是你本人"
-                className={SMALL_INPUT_CLASS}
-                disabled={busy}
-              />
-            </div>
-
-            <div className="space-y-1">
-              <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                <Key className="w-3.5 h-3.5 text-amber-400" />
-                管理員給的開通碼
-              </label>
-              <input
-                type="text"
-                value={actCode}
-                onChange={(e) => setActCode(e.target.value.toUpperCase())}
-                placeholder="例如：JUNE-7K3M-P2QX-9WD4"
-                className="w-full bg-slate-950 border border-amber-500/50 rounded-xl px-3.5 py-2.5 text-xs text-amber-300 font-mono placeholder-slate-500 focus:outline-none disabled:opacity-50"
-                disabled={busy}
-              />
-            </div>
-
-            <button
-              type="submit"
-              disabled={busy || !backendReady}
-              className="w-full py-3 bg-gradient-to-r from-amber-600 to-emerald-600 hover:from-amber-500 hover:to-emerald-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition-all shadow-lg flex items-center justify-center gap-2 cursor-pointer mt-2"
-            >
-              {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <CheckCircle2 className="w-4 h-4" />}
-              {busy ? '驗證中…' : '驗證並立即開通'}
-            </button>
-          </form>
-        )}
+              <button type="submit" className="btn pri wide" disabled={busy || !backendReady}>
+                {busy ? <Loader2 className="animate-spin" /> : <CheckCircle2 />}
+                {busy ? '驗證中…' : '驗證並立即開通'}
+              </button>
+            </form>
+          )}
+        </div>
       </div>
     </div>
   );
 };
-

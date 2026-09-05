@@ -1,0 +1,2645 @@
+/* 元件樣式：照 scratch/ui-preview.html 定案版本搬過來。
+   一律是「無層」CSS（沒有包在 @layer 裡），所以在 Tailwind 4 的階層裡它贏過所有工具類別——
+   這是刻意的：版面仍然用 Tailwind，外觀走這裡，兩邊不會互相打。
+   要就地蓋掉某一條時用 inline style（比無層 CSS 更後面），不要另外發明工具類別。
+   加任何新的類別名稱前先 grep 一次：`.seg` 撞 `.gseg`、`.thumb` 撞 `.pic` 各害過一次
+   「驗證台全綠但畫面是壞的」。 */
+
+/* ── app 外殼：毛玻璃材質的環境光就打在這一層 ── */
+.app-shell {
+  background:
+    radial-gradient(80% 62% at 10% -8%, var(--tint1), transparent 62%),
+    radial-gradient(72% 56% at 98% 108%, var(--tint2), transparent 60%),
+    var(--bg);
+  color: var(--txt);
+}
+
+/* ── 視窗標題列 ──
+   列高 32＝Windows 11 原生規格，右邊那 138px（三顆 46×32 的縮小／放大／關閉）由
+   作業系統畫在這一列上面（main.cjs 的 titleBarOverlay），所以第三欄故意留空——
+   預覽裡那三顆自己畫的假按鈕沒有搬過來，那會變成兩套按鈕。
+   置中一定要 grid `1fr auto 1fr`：用 flex 的話名字只會置中於「按鈕左邊那塊」，往左偏 69px。
+   最窄的視窗（1024）兩側各分到 480px 以上，遠大於 138px，所以名字永遠是對窗置中的。 */
+.titlebar {
+  flex: none;
+  height: 32px;
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  background: var(--bg);
+  border-bottom: 1px solid var(--line);
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.titlebar .tt {
+  grid-column: 2;
+  font-size: var(--fs1);
+  font-weight: 600;
+  color: var(--dim);
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+
+/* ── 頂列。自己當容器：擠不下時按重要度丟掉標籤，而不是把分段控制推出畫面 ── */
+.nav {
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  gap: var(--sp3);
+  padding: var(--sp2) var(--sp3);
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+  flex: none;
+  container-type: inline-size;
+}
+.nav .nav-tabs {
+  grid-column: 2;
+}
+.nav .tools {
+  grid-column: 3;
+  justify-self: end;
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+}
+@container (max-width: 850px) {
+  .nav .n3 {
+    display: none;
+  }
+}
+.navsep {
+  width: 1px;
+  height: 18px;
+  background: var(--line2);
+  margin: 0 4px;
+  flex: none;
+}
+.dotbadge {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--warn);
+  box-shadow: 0 0 0 2px var(--card);
+}
+/* 目前登入的帳號。預覽把它畫成 ghost 按鈕（還帶了一個下拉箭頭），
+   但 src 裡它從來不能點——沒有選單也沒有 onClick——所以這裡是靜態的一塊：
+   不吃 hover、不進 Tab 順序。長名字截在 80px，跟 src 的 max-w-[80px] 一致。 */
+.who {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  height: 28px;
+  padding: 0 6px;
+  border-radius: var(--r2);
+  font-size: var(--fs1);
+  color: var(--dim);
+}
+.who svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.who b {
+  color: var(--txt);
+  font-weight: 600;
+  max-width: 80px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.notice {
+  flex: none;
+  margin: var(--sp2) var(--sp3) 0;
+  padding: 6px var(--sp2);
+  border-radius: var(--r2);
+  font-size: var(--fs0);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--warn);
+  background: rgba(242, 201, 76, 0.1);
+  border: 1px solid rgba(242, 201, 76, 0.32);
+}
+.notice svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+}
+
+/* ── 按鈕族：一個 .btn base，三個層級 ── */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: var(--r2);
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--up);
+  color: var(--txt);
+  font-size: var(--fs1);
+  font-weight: 500;
+  white-space: nowrap;
+  transition: background 0.16s, border-color 0.16s, color 0.16s;
+}
+.btn:hover:not(:disabled) {
+  border-color: var(--line2);
+  background: var(--card2);
+}
+.btn:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.btn svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+}
+.btn.pri {
+  background: var(--acc);
+  border-color: transparent;
+  color: var(--acc-ink);
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+.btn.pri:hover:not(:disabled) {
+  background: var(--acc-hi);
+  border-color: transparent;
+}
+.btn.danger {
+  color: var(--bad);
+  border-color: var(--line);
+}
+.btn.danger:hover:not(:disabled) {
+  background: rgba(235, 87, 87, 0.1);
+  border-color: rgba(235, 87, 87, 0.35);
+}
+.btn.ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+.btn.ghost:hover:not(:disabled) {
+  background: var(--up);
+  border-color: transparent;
+  color: var(--txt);
+}
+.btn.ico-only {
+  width: 28px;
+  padding: 0;
+}
+.btn.mini {
+  height: 23px;
+  padding: 0 7px;
+  font-size: var(--fs0);
+  background: transparent;
+  border-color: transparent;
+  color: var(--dim);
+}
+.btn.mini:hover:not(:disabled) {
+  background: var(--up);
+  border-color: var(--line);
+  color: var(--txt);
+}
+.btn.mini svg {
+  width: 13px;
+  height: 13px;
+}
+.btn.mini.ico-only {
+  width: 23px;
+}
+/* mini 是「更輕」的變體，pri 是「更重」的狀態；兩個同時出現時要以 pri 為準。
+   .btn.pri 寫在 .btn.mini 前面，同分下後者贏，所以填底會被 mini 的透明底蓋掉——
+   受害者是「錄製快捷鍵中」那顆與帳號列的「開通」。不靠改順序，明寫這一條組合。 */
+.btn.mini.pri {
+  background: var(--acc);
+  border-color: transparent;
+  color: var(--acc-ink);
+  font-weight: 600;
+}
+.btn.mini.pri:hover:not(:disabled) {
+  background: var(--acc-hi);
+  border-color: transparent;
+  color: var(--acc-ink);
+}
+/* 整列的主要送出鈕（登入／註冊／開通、一鍵更新）：比 28px 的工具鈕高一階，
+   佔滿表單寬度。這是唯一會出現在直立式表單最底下的按鈕尺寸。 */
+.btn.wide {
+  width: 100%;
+  height: 32px;
+  font-size: var(--fs2);
+}
+/* 只在滑到父層（卡片／群組列）時才出現的次要動作 */
+.hoveronly {
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+.card:hover .hoveronly,
+.card:focus-within .hoveronly,
+.ghead:hover .hoveronly,
+.ghead:focus-within .hoveronly {
+  opacity: 1;
+}
+
+/* ── iOS 分段控制 ──
+   grid-auto-flow:column 是必要的不是裝飾：grid 預設一列一個，少了它滑塊左右滑、字卻上下疊。
+   button 高度 22 是量出來的：22 + 上下 padding 2×2 + 邊框 1×2 = 28px，
+   跟頂列每一顆 .btn.ico-only（28×28）齊平。 */
+.seg {
+  position: relative;
+  display: grid;
+  grid-auto-flow: column;
+  grid-auto-columns: 1fr;
+  gap: 0;
+  padding: 2px;
+  flex: none;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+}
+.seg .seg-thumb {
+  position: absolute;
+  top: 2px;
+  bottom: 2px;
+  left: 2px;
+  width: calc((100% - 4px) / var(--n));
+  border-radius: calc(var(--r3) - 3px);
+  background: var(--up);
+  border: 1px solid var(--line2);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35), inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  transform: translateX(calc(var(--i) * 100%));
+  transition: transform 0.28s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.seg button {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  height: 22px;
+  padding: 0 10px;
+  border: 0;
+  background: none;
+  cursor: pointer;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--fs1);
+  font-weight: 500;
+  transition: color 0.18s;
+}
+.seg button svg {
+  width: 12px;
+  height: 12px;
+}
+.seg button[aria-selected="true"] {
+  color: var(--txt);
+  font-weight: 600;
+}
+/* 圖示＝emoji 是定案值，所以只有預覽裡真的放了 emoji 的地方才用 emoji
+   （分頁 🎯⚡、計時器區塊標題 ⏱️🖱️、計時組卡的 .ticon），其餘一律維持 lucide 圖示。 */
+.emo {
+  font-size: 12px;
+}
+
+/* ── iOS 開關：靠「旋鈕位置」表達狀態，不只靠顏色 ──
+   38×23、旋鈕 17：這是他看過沒有意見的尺寸。我曾經自己收小一號（34×21／旋鈕 15），
+   那是把他說的「滑塊太大」誤讀成這裡才做的（他指的是頂列分段控制），已經還原，別再自己動。
+   位移量 = 內寬 − 旋鈕 − 兩側各 2px，換尺寸時三個數字要一起改。 */
+.sw {
+  position: relative;
+  width: 38px;
+  height: 23px;
+  flex: none;
+  border-radius: 99px;
+  cursor: pointer;
+  background: var(--up);
+  border: 1px solid var(--line2);
+  transition: background 0.22s, border-color 0.22s;
+}
+.sw i {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 17px;
+  height: 17px;
+  border-radius: 99px;
+  background: #fff;
+  /* 白旋鈕壓在 --acc 軌道上四組都 ≥4.7:1，所以這道外圈只是質感，不是用來救對比的 */
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.45), 0 0 0 0.5px rgba(0, 0, 0, 0.2);
+  transition: transform 0.24s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.sw[aria-checked="true"] {
+  background: var(--acc);
+  border-color: transparent;
+}
+.sw[aria-checked="true"] i {
+  transform: translateX(15px);
+}
+.sw.sm {
+  width: 34px;
+  height: 21px;
+}
+.sw.sm i {
+  width: 15px;
+  height: 15px;
+}
+.sw.sm[aria-checked="true"] i {
+  transform: translateX(13px);
+}
+.sw:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* ── 面板：標題只有一行小字，不再每個面板配一個彩色圖示磚 ──
+   inset 高光原本掛在 html.material 上，材質已定案為毛玻璃，直接寫進來。 */
+.panel {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--card-bg);
+  backdrop-filter: blur(var(--card-blur)) saturate(var(--card-sat));
+  border: 1px solid var(--line);
+  border-radius: var(--r4);
+  overflow: hidden;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.panel > header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  flex: none;
+  padding: var(--sp2) var(--sp3);
+  border-bottom: 1px solid var(--line);
+}
+.panel > header h3 {
+  margin: 0;
+  font-size: var(--fs0);
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+}
+.panel > .body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp2);
+}
+.count {
+  display: inline-grid;
+  place-items: center;
+  min-width: 18px;
+  height: 17px;
+  padding: 0 5px;
+  border-radius: 99px;
+  background: var(--up);
+  border: 1px solid var(--line);
+  font-size: 10px;
+  font-weight: 600;
+  color: var(--dim);
+}
+
+/* ── iOS 群組列表：分隔線從內容左緣開始（inset），不是整寬 ── */
+.list {
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  overflow: hidden;
+}
+.list .row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  min-height: var(--row);
+  padding: 6px var(--sp3);
+}
+.list .row + .row::before {
+  content: "";
+  position: absolute;
+  left: var(--inset, var(--sp3));
+  right: 0;
+  top: 0;
+  height: 1px;
+  background: var(--line);
+}
+/* iOS 群組列的標籤永遠是一列、永遠不縮（flex:1 0 auto：撐開空白但不讓步），
+   擠不下時該讓「值」讓位，不是把「偵測區域」折成「偵測／區域」。 */
+.list .row .lab {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+.list .row .lab svg {
+  width: 14px;
+  height: 14px;
+  color: var(--dim);
+  flex: none;
+}
+.list .row .val {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--dim);
+  font-size: var(--fs1);
+  white-space: nowrap;
+}
+/* 數字讀數是固定欄寬（避免數值跳動時推動版面），所以絕對不可以被壓縮：
+   min-width:0 一開，34px 的「85%」會被 flex 擠成 24px 然後切掉尾巴。 */
+.list .row .val.num {
+  flex: none;
+  overflow: visible;
+}
+.list .row .val b {
+  color: var(--txt);
+  font-weight: 600;
+}
+/* 值與值之間的細分隔線。好幾個地方都在用，所以是全域的一條規則：
+   只寫在 .card .meta .sub 底下的話，別處的 <span class="s"> 會變成 0 寬的空 inline，
+   「88%│即時 97.4%」直接黏成「88%即時」。 */
+.s {
+  display: inline-block;
+  width: 1px;
+  height: 9px;
+  margin: 0 6px;
+  background: var(--line2);
+  vertical-align: middle;
+  flex: none;
+}
+.list .row.stack {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 5px;
+  padding-top: 9px;
+  padding-bottom: 9px;
+}
+.list .row .head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp2);
+}
+.chev {
+  width: 13px;
+  height: 13px;
+  color: var(--dim2);
+  flex: none;
+}
+
+/* ── iOS 滑桿 ──
+   滑塊 15px、軌道 4px：這是他看過沒有意見的尺寸。我曾經把它收成 12px，
+   那是誤讀「滑塊太大」時做的（他指的是頂列分段控制），已經還原，別再自己動。
+   margin-top = (軌道 − 滑塊)/2 = (4 − 15)/2 = −5.5px，換滑塊尺寸要一起改。
+   軌道的填色量走 --p（由 React 以 inline style 傳入百分比）。 */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 16px;
+  background: transparent;
+  cursor: pointer;
+  display: block;
+}
+input[type="range"]::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 99px;
+  background: linear-gradient(90deg, var(--acc) var(--p, 50%), var(--up) var(--p, 50%));
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 15px;
+  height: 15px;
+  margin-top: -5.5px;
+  border-radius: 99px;
+  background: #fff;
+  border: 0;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.5), 0 0 0 0.5px rgba(0, 0, 0, 0.18);
+}
+/* 預覽裡還有一組 ::-moz-range-* 的孿生規則，這裡刻意不搬：
+   Electron 就是 Chromium，那三條在這個 app 裡永遠不會生效（實測 Chromium 會直接丟掉它們），
+   留著只會讓人以為軌道填色有兩套實作。 */
+input[type="range"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* 數字輸入 / 下拉：同一個外觀。
+   只有數字小方塊（和 F8 那種鍵名）置中，文字框一律靠左——src 裡它們就是普通的 <input>。 */
+.field {
+  height: 24px;
+  padding: 0 6px;
+  border-radius: var(--r1);
+  background: var(--card);
+  border: 1px solid var(--line2);
+  color: var(--txt);
+  font-size: var(--fs1);
+  text-align: left;
+}
+.field.num {
+  text-align: center;
+}
+select.field {
+  padding-right: 2px;
+  cursor: pointer;
+}
+.field:focus {
+  outline: none;
+  border-color: var(--acc);
+  box-shadow: 0 0 0 3px var(--acc-ring);
+}
+.field:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+/* 狀態標籤：一律「圖示或文字 + 顏色」，不靠顏色單獨表意。
+   藥丸永遠不折字：少了 nowrap，1100 的畫面列會把「命中 2 個目標」折成兩行。 */
+.tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r1);
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--up);
+  color: var(--dim);
+  white-space: nowrap;
+  flex: none;
+}
+.tag svg {
+  width: 11px;
+  height: 11px;
+}
+.tag.ok {
+  color: var(--ok);
+  border-color: rgba(76, 183, 130, 0.34);
+  background: rgba(76, 183, 130, 0.12);
+}
+.tag.warn {
+  color: var(--warn);
+  border-color: rgba(242, 201, 76, 0.32);
+  background: rgba(242, 201, 76, 0.12);
+}
+.tag.bad {
+  color: var(--bad);
+  border-color: rgba(235, 87, 87, 0.32);
+  background: rgba(235, 87, 87, 0.12);
+}
+/* 強調色藥丸：不是好壞，是「這一格跟身分／權限有關」（管理員是誰、某人是管理員）。 */
+.tag.acc {
+  color: var(--acc-txt);
+  border-color: var(--acc-ring);
+  background: var(--acc-soft);
+}
+/* 藥丸本來是靜態標籤，但角色那一格點下去就會切換管理員／一般使用者，
+   所以只有 button.tag 要補上手指標與滑過反饋（Tailwind v4 的 preflight 把按鈕游標設成 default）。 */
+button.tag {
+  cursor: pointer;
+  transition: color 0.16s, border-color 0.16s;
+}
+/* 中性藥丸（一般使用者）滑過時字變亮；強調色藥丸（管理員）本來就是彩色的，
+   只把外框加深一階，不要把彩字換成白字。 */
+button.tag:not(.acc):hover:not(:disabled) {
+  color: var(--txt);
+  border-color: var(--line2);
+}
+button.tag.acc:hover:not(:disabled) {
+  border-color: var(--acc-txt);
+}
+button.tag:disabled {
+  cursor: default;
+}
+.num {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+}
+
+/* ── 主區：左畫面 + 右欄。grid 子層一定要 min-width:0，否則寬 canvas 會把右欄推出視窗 ──
+   460px 是照 App.tsx 原本的 lg:w-[460px] 抄的，不是自己挑的數字。 */
+.main {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 460px;
+  gap: var(--sp3);
+  padding: var(--sp3);
+}
+.main > * {
+  min-width: 0;
+  min-height: 0;
+}
+.side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp3);
+  min-height: 0;
+}
+.side .targets {
+  flex: 1;
+  min-height: 0;
+}
+.side .logs {
+  height: 210px;
+  flex: none;
+}
+
+/* ── 畫面預覽 ── */
+.viewer {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r4);
+}
+/* 讓 HUD 的取捨依「畫布實際寬度」決定，而不是依整個視窗寬度：
+   使用者把右欄拉寬時畫布會變窄，媒體查詢看不到這件事，容器查詢看得到。 */
+.canvas {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  background: #0a0e12;
+  container-type: inline-size;
+}
+/* HUD：這是 iOS 材質唯一真正該用的地方 —— 浮在影像上的東西 */
+.hud {
+  position: absolute;
+  top: var(--sp2);
+  left: var(--sp2);
+  right: var(--sp2);
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: var(--sp2);
+  pointer-events: none;
+}
+.hud > * {
+  pointer-events: auto;
+}
+/* 浮在畫面上的玻璃藥丸永遠是「深色材質＋亮字」，淺色模式也一樣：
+   它下面是使用者的視窗畫面，不是我們的底色，所以不能跟著主題翻。
+   這幾個變數在這裡就地覆寫，裡面的字自然全部繼承得到。
+   藥丸是固定 28px 高的一列，中文絕對不可以折行——窄的時候丟掉次要欄位，不是折字。 */
+.glass {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp2);
+  height: 28px;
+  padding: 0 10px;
+  --txt: #f8f9fa;
+  --dim: #d3d7dc;
+  --dim2: #c2c7ce;
+  --acc-txt: var(--acc-ondark, #34d399);
+  --line2: rgba(255, 255, 255, 0.2);
+  white-space: nowrap;
+  flex: none;
+  border-radius: var(--r3);
+  font-size: var(--fs1);
+  color: var(--txt);
+  background: rgba(14, 15, 17, 0.72);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  backdrop-filter: blur(22px) saturate(180%);
+  box-shadow: 0 2px 10px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+}
+.glass .ok {
+  color: #6ee7b7;
+}
+.glass .sep {
+  width: 1px;
+  height: 12px;
+  background: var(--line2);
+  flex: none;
+}
+.glass .dot {
+  position: relative;
+  width: 7px;
+  height: 7px;
+  border-radius: 99px;
+  color: #4cb782;
+  background: currentColor;
+  flex: none;
+}
+/* 暫停時整顆點（含外圈）換成警示色並停住呼吸動畫：用 currentColor 串起來，
+   免得改一個顏色要記得改兩個地方。.idle＝還沒擷取畫面，一樣不呼吸。 */
+.glass .dot.paused {
+  color: var(--warn);
+}
+.glass .dot.idle {
+  color: #8b929c;
+}
+.glass .dot::after {
+  content: "";
+  position: absolute;
+  inset: -3px;
+  border-radius: 99px;
+  border: 1px solid currentColor;
+  opacity: 0.5;
+  animation: hud-dot-pulse 1.9s ease-out infinite;
+}
+.glass .dot.paused::after,
+.glass .dot.idle::after {
+  animation: none;
+  opacity: 0.35;
+}
+/* 名字不可以只叫 pulse：Tailwind 的 animate-pulse 也叫 pulse，而 @keyframes 不吃階層、
+   只看文件順序，這份是最後 import 的 → 會把 Tailwind 那組整個蓋掉。
+   src 有 9 處 animate-pulse（含登入視窗、更新視窗），會全部從「呼吸淡出」變成「放大消失」。 */
+@keyframes hud-dot-pulse {
+  0% {
+    transform: scale(0.6);
+    opacity: 0.7;
+  }
+  100% {
+    transform: scale(1.5);
+    opacity: 0;
+  }
+}
+.glass.pad0 {
+  height: 28px;
+  padding: 2px;
+  gap: 2px;
+}
+/* 藥丸內寬只有 24px，而 .btn 是 28px 的定高 → 不收一號的話 hover 的底色會溢出藥丸邊。 */
+.glass.pad0 .btn {
+  height: 24px;
+  width: 24px;
+  border-radius: var(--r1);
+}
+/* HUD 裡的「一組值」不能叫 .seg——.seg 是頂列那個 iOS 分段控制的軌道，
+   帶著 sunk 底色＋邊框＋2px 內距。深色時它藏在玻璃藥丸裡看不出來，
+   淺色時就在深色藥丸裡畫出一塊淺灰底，數字掉到 1.25:1。 */
+.glass .gseg {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp2);
+}
+/* 畫布一窄就按重要度往下丟：延遲 → 解析度 → GPU 徽章。
+   「正在監控」和 FPS 是最後才會消失的兩件事。 */
+@container (max-width: 600px) {
+  .hud .d1 {
+    display: none;
+  }
+}
+@container (max-width: 500px) {
+  .hud .d2 {
+    display: none;
+  }
+}
+@container (max-width: 410px) {
+  .hud .d3 {
+    display: none;
+  }
+}
+/* 這一列裝不下的時候，讓「結束擷取」整顆掉到下一列——不准把裡面的字折斷。 */
+.viewbar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp2);
+  flex: none;
+  padding: var(--sp2);
+  border-top: 1px solid var(--line);
+  background: var(--card);
+}
+
+/* 還沒擷取畫面時的待機畫面。預覽沒畫這一塊（它永遠假設串流中），
+   但 src 一開機就是這個狀態，所以照 src 的內容用新代幣重畫：磚、標題、說明、一顆主要動作。
+   底下是 .canvas 的深色底，所以字色用寫死的亮色而不是 --txt。 */
+.standby {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: var(--sp2);
+  padding: var(--sp4);
+  text-align: center;
+}
+.standby .tile {
+  display: grid;
+  place-items: center;
+  width: 56px;
+  height: 56px;
+  margin-bottom: 2px;
+  border-radius: var(--r4);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: rgba(255, 255, 255, 0.05);
+  color: #8b929c;
+}
+.standby .tile svg {
+  width: 26px;
+  height: 26px;
+}
+.standby h3 {
+  margin: 0;
+  font-size: var(--fs3);
+  font-weight: 600;
+  color: #f8f9fa;
+}
+.standby p {
+  margin: 0 0 6px;
+  max-width: 330px;
+  font-size: var(--fs1);
+  line-height: 1.65;
+  color: #b9bfc7;
+}
+
+.card {
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  overflow: hidden;
+  transition: border-color 0.16s;
+  container-type: inline-size;
+}
+.card + .card {
+  margin-top: var(--sp2);
+}
+.card:hover {
+  border-color: var(--line2);
+}
+.card.hit {
+  border-color: var(--acc);
+  box-shadow: 0 0 0 1px var(--acc-soft), 0 0 18px -6px var(--acc-ring);
+}
+.card.off {
+  opacity: 0.52;
+}
+.card .top {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: 7px var(--sp2) 7px 3px;
+}
+.grip {
+  width: 14px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  color: var(--dim2);
+  cursor: grab;
+}
+.grip svg {
+  width: 13px;
+  height: 13px;
+}
+/* 目標卡左邊那格縮圖。原本叫 .thumb，跟分段控制的滑塊（.seg .thumb）撞名：
+   height:38px 只寫在這裡，卻整條漏進頂列的滑塊，讓 30px 的軌道裡塞了 38px 的方塊——
+   就是他圈起來的「滑塊太大」。改名成 .pic 把撞名連根拔掉。 */
+.pic {
+  position: relative;
+  width: 38px;
+  height: 38px;
+  flex: none;
+  border-radius: var(--r1);
+  overflow: hidden;
+  background: var(--sunk);
+  border: 1px solid var(--line2);
+  display: grid;
+  place-items: center;
+}
+.pic img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.pic .swb {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tc, var(--acc));
+}
+.pic span {
+  font-size: 9px;
+  color: var(--dim2);
+  padding-left: 3px;
+}
+/* 縮圖上的「重新截圖／編輯區域」：src 本來就有，滑到卡片才蓋黑幕浮出來 */
+.pic .ov {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 0, 0, 0.6);
+  opacity: 0;
+  transition: opacity 0.16s;
+}
+.card:hover .pic .ov,
+.card:focus-within .pic .ov {
+  opacity: 1;
+}
+.pic .ov svg {
+  width: 13px;
+  height: 13px;
+}
+.card .meta {
+  flex: 1;
+  min-width: 0;
+}
+.card .meta .name {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  flex-wrap: nowrap;
+  overflow: hidden;
+}
+.card .meta .name > * {
+  flex: none;
+}
+/* 名稱是這一列唯一可以被壓縮的東西。少了 flex:0 1 auto，長名字會撐到 max-width 把
+   後面的相似度徽章／已停用推出 197px 的欄位外，被 overflow:hidden 切成一條空殼。 */
+.card .meta .name b {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: var(--fs2);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+/* 名稱旁邊的改名鉛筆原本就有（舊版是 h3 旁 10px 的小鉛筆），不是新加的。用一般
+   .btn.mini.ico-only 的 23px 會從 197px 的名稱欄再吃掉一截，所以縮回小尺寸。 */
+.card .meta .name .btn.ico-only {
+  width: 17px;
+  height: 17px;
+  padding: 0;
+}
+.card .meta .name .btn.ico-only svg {
+  width: 11px;
+  height: 11px;
+}
+/* 這一列是「一列」，不是段落：中文一定要 nowrap。
+   欄位不夠寬時丟掉門檻（它在展開的參數裡有滑桿），而不是折字。 */
+.card .meta .sub {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 1px;
+  font-size: 10px;
+  color: var(--dim2);
+  flex-wrap: nowrap;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.card .meta .sub > * {
+  flex: none;
+}
+.card .meta .sub .d1 {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+@container (max-width: 470px) {
+  .card .meta .sub .d1 {
+    display: none;
+  }
+}
+.card .meta .sub .s {
+  margin: 0;
+} /* 這一列本來就有 flex gap:6px，不用再加左右邊距 */
+.card .acts {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+.card .expand {
+  padding: 0 var(--sp2) var(--sp2);
+  display: grid;
+  gap: var(--sp2);
+}
+.grid2 {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp2);
+}
+.grid2 > * {
+  min-width: 0;
+}
+.score {
+  display: inline-grid;
+  place-items: center;
+  min-width: 42px;
+  height: 19px;
+  border-radius: var(--r1);
+  font-size: 10px;
+  font-weight: 600;
+  border: 1px solid var(--line);
+  background: var(--up);
+  color: var(--dim);
+}
+.score.on {
+  color: var(--ok);
+  border-color: rgba(76, 183, 130, 0.34);
+  background: rgba(76, 183, 130, 0.12);
+}
+.score.near {
+  color: var(--warn);
+  border-color: rgba(242, 201, 76, 0.3);
+  background: rgba(242, 201, 76, 0.1);
+}
+/* ── 記錄列 ── */
+.logrow {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: 5px 7px;
+  border-radius: var(--r2);
+}
+.logrow:hover {
+  background: var(--up);
+}
+.logrow .chip {
+  width: 26px;
+  height: 26px;
+  flex: none;
+  border-radius: 5px;
+  background: var(--sunk);
+  border: 1px solid var(--line2);
+  position: relative;
+  overflow: hidden;
+}
+.logrow .chip img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.logrow .chip i {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 3px;
+  background: var(--tc, var(--acc));
+}
+.logrow .t {
+  flex: 1;
+  min-width: 0;
+}
+.logrow .t b {
+  font-size: var(--fs1);
+  font-weight: 600;
+  display: block;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.logrow .t span {
+  font-size: 10px;
+  color: var(--dim2);
+}
+.logrow .r {
+  text-align: right;
+  font-size: 10px;
+  color: var(--dim2);
+  white-space: nowrap;
+}
+.empty {
+  display: grid;
+  place-items: center;
+  gap: 6px;
+  padding: 26px 10px;
+  text-align: center;
+  color: var(--dim2);
+}
+.empty svg {
+  width: 20px;
+  height: 20px;
+  color: var(--dim2);
+}
+.empty p {
+  margin: 0;
+  font-size: var(--fs1);
+}
+
+/* ── 子目錄群組（TargetList 的 group）：拖曳把手、可點改名、啟用計數、批次 ──
+   不可以叫 .group：Tailwind 的 group-hover: 變體要求父層掛 class="group"，
+   src 好幾個地方都在用（縮圖 hover 就是），一旦 .group 有了邊框與底色，
+   每一個純標記用的 group 元素都會被畫出一個框。 */
+.tgroup {
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  background: var(--sunk);
+  overflow: hidden;
+}
+.tgroup + .tgroup,
+.tgroup + .card,
+.card + .tgroup {
+  margin-top: var(--sp2);
+}
+.ghead {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: 5px var(--sp2) 5px 3px;
+  border-bottom: 1px solid var(--line);
+  background: var(--card);
+}
+.gbody {
+  padding: var(--sp2);
+}
+.gname {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+.gname svg {
+  width: 14px;
+  height: 14px;
+  color: var(--dim);
+  flex: none;
+}
+.gname b {
+  font-size: var(--fs2);
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  max-width: 150px;
+}
+.rename {
+  height: 22px;
+  padding: 0 6px;
+  border-radius: var(--r1);
+  background: var(--card2);
+  border: 1px solid var(--acc);
+  color: var(--txt);
+  font-size: var(--fs2);
+  width: 150px;
+}
+.rename:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--acc-ring);
+}
+/* 拖放提示：只用虛線與位移線表達，不換底色——換底色會把上面的字帶進新的對比組合 */
+.dropzone {
+  padding: 11px;
+  border-radius: var(--r2);
+  text-align: center;
+  border: 1px dashed var(--line3);
+  color: var(--dim2);
+  font-size: var(--fs0);
+}
+.dropzone.on {
+  border-color: var(--acc-txt);
+  color: var(--acc-txt);
+}
+.card.dragging {
+  opacity: 0.4;
+}
+.card.insert {
+  box-shadow: 0 -2px 0 0 var(--acc-txt);
+}
+/* 批次面板：邊框帶強調色就夠了，底色維持 --sunk。
+   （用 --acc-soft 當底色會把 --dim2 的字推到 4.15:1。） */
+.bulk {
+  border: 1px solid var(--acc-ring);
+  background: var(--sunk);
+  border-radius: var(--r3);
+  padding: var(--sp2);
+  margin-top: var(--sp2);
+  display: grid;
+  gap: var(--sp2);
+}
+.bulk > header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.bulk > header b {
+  font-size: var(--fs1);
+  font-weight: 600;
+}
+
+/* ── 計時器頁 ── */
+.page {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp3);
+  display: grid;
+  gap: var(--sp3);
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-content: start;
+}
+.page .full {
+  grid-column: 1 / -1;
+}
+/* 用 auto-fit 而不是寫死兩欄：計時器頁沒有固定寬的側欄，欄寬會跟著視窗縮，
+   窄的時候要能自己併成一欄，否則欄寬掉到 150px 那些中文標籤全部折行。
+   不可以叫 .sub：那是目標卡第二行（.card .meta .sub）的名字。 */
+.subgrid {
+  display: grid;
+  gap: var(--sp3);
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  align-content: start;
+  min-width: 0;
+}
+.sect {
+  font-size: var(--fs0);
+  font-weight: 600;
+  color: var(--dim);
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin: 0 0 var(--sp2);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.sect svg {
+  width: 13px;
+  height: 13px;
+}
+/* 小型選項組（深色／淺色、顏色四色、掃描頻率）。預覽裡這兩條寫在 .rail 區塊，
+   但用到它的是設定視窗本身，所以搬進來當正式元件。
+   狀態走 aria-pressed 而不是額外的 class：那是這種按鈕該用的語意，
+   螢幕閱讀器唸得出來，樣式也不用多一個名字。 */
+.opts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.opts button {
+  padding: 5px 9px;
+  border-radius: var(--r2);
+  border: 1px solid var(--line);
+  background: var(--sunk);
+  color: var(--dim);
+  font-size: var(--fs0);
+  cursor: pointer;
+  transition: background 0.16s, color 0.16s, border-color 0.16s;
+}
+.opts button:hover {
+  color: var(--txt);
+  border-color: var(--line2);
+}
+.opts button[aria-pressed="true"] {
+  background: var(--acc);
+  border-color: transparent;
+  color: var(--acc-ink);
+  font-weight: 600;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.16);
+}
+/* 顏色按鈕上的小色塊。淺色主題也用白色描邊：色塊本身是飽和色，
+   壓在上面的白邊在兩種底色下都看得出邊界。 */
+.swatch {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+  display: inline-block;
+  margin-right: 5px;
+  vertical-align: -1px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+}
+.box {
+  background: var(--card-bg);
+  backdrop-filter: blur(var(--card-blur)) saturate(var(--card-sat));
+  border: 1px solid var(--line);
+  border-radius: var(--r4);
+  padding: var(--sp3);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05);
+}
+.timer {
+  display: flex;
+  align-items: center;
+  gap: var(--sp3);
+}
+.bigclock {
+  font-size: 30px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+}
+.bigclock.run {
+  color: var(--warn);
+}
+.ring {
+  position: relative;
+  width: 52px;
+  height: 52px;
+  flex: none;
+}
+.ring svg {
+  transform: rotate(-90deg);
+}
+.ring b {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  font-size: var(--fs1);
+  font-weight: 600;
+}
+/* 頁內工具列：標題 + 一個主要動作 */
+.bar2 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  flex-wrap: wrap;
+}
+/* 計時組卡：頂端是進度條（不用另一個色塊），數字讀數是主角。
+   最小欄寬 260 不是隨手挑的：第一列要塞得下 36px 圖示＋名稱＋三顆控制項，
+   230 的時候名稱只剩 75px，「王城 BUFF」會被省略號切掉。 */
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: var(--sp2);
+}
+.tcard {
+  position: relative;
+  background: var(--card2);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  overflow: hidden;
+}
+.tcard.off {
+  opacity: 0.55;
+}
+.tcard .prog {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 2px;
+  background: var(--warn);
+  width: var(--w, 0%);
+}
+.tcard .in {
+  padding: var(--sp2);
+  display: grid;
+  gap: 6px;
+}
+.tcard .r1 {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  min-width: 0;
+}
+.tcard .nm {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tcard .nm b {
+  font-size: var(--fs2);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 名稱旁邊的「已停用」在真的 app 裡是 9px 的小徽章（src 是 text-[9px] px-1.5），
+   畫成一般 .tag（11px）就多吃 8px，害 100px 的名稱欄只剩 51px。 */
+.tcard .nm .tag {
+  font-size: 9px;
+  height: 16px;
+  padding: 0 4px;
+}
+.ticon {
+  width: 36px;
+  height: 36px;
+  flex: none;
+  border-radius: var(--r1);
+  background: var(--sunk);
+  border: 1px solid var(--line2);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  font-size: 15px;
+}
+.bigcount {
+  font-size: 26px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  line-height: 1.1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.bigcount.run {
+  color: var(--warn);
+}
+.bigcount small {
+  font-size: var(--fs1);
+  font-weight: 500;
+  color: var(--dim2);
+  letter-spacing: 0;
+}
+.tcard .foot {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding-top: 2px;
+  border-top: 1px solid var(--line);
+}
+/* ── 表單：左欄固定寬的標籤 + 右邊控制項，中文標籤一律不折 ── */
+.form {
+  display: grid;
+  gap: var(--sp2);
+}
+/* 表單列一定要能「整個項目換行」。項目本身都是 nowrap（不能折字），欄又是彈性寬，
+   所以裝不下的時候唯一的出路是把最後一個項目丟到下一列——否則它會整段溢出卡片外面。 */
+.frow {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--sp2);
+  min-width: 0;
+}
+/* 會伸縮的欄位一定要有上限：沒有上限時 flex:1 的文字框會拉到 950px、滑桿拉到 900px，
+   滑桿頭離右邊的數字讀數半個螢幕遠。個別要更窄的地方照舊用 inline 蓋掉。 */
+.frow input.field {
+  max-width: 300px;
+}
+.frow input[type="range"] {
+  max-width: 320px;
+}
+.fl {
+  flex: none;
+  width: 88px;
+  font-size: var(--fs1);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.fsub {
+  font-size: var(--fs0);
+  color: var(--dim2);
+  white-space: nowrap;
+}
+.hk {
+  height: 24px;
+  padding: 0 8px;
+  border-radius: var(--r1);
+  background: var(--sunk);
+  border: 1px dashed var(--line3);
+  color: var(--warn);
+  font-size: var(--fs1);
+  font-weight: 600;
+  display: inline-flex;
+  align-items: center;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+.hk.rec {
+  border-style: solid;
+  border-color: var(--bad);
+  color: var(--bad);
+}
+.radios {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--sp3);
+  min-width: 0;
+}
+.radios label,
+.checks label,
+.ckl {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: var(--fs1);
+  white-space: nowrap;
+  cursor: pointer;
+  min-width: 0;
+}
+.radios label,
+.ckl {
+  color: var(--dim);
+}
+/* 表單列裡的小單位／讀數（「秒」「100%」）。.list .row .val 那一條只管群組列，
+   這裡的 .frow 進不去，沒有這一條它會用預設 13px 白字，看起來像另一個輸入框的內容。 */
+.frow .val {
+  flex: none;
+  font-size: var(--fs1);
+  color: var(--dim);
+  white-space: nowrap;
+}
+.frow .val.num {
+  font-variant-numeric: tabular-nums;
+}
+/* 勾選盒／圓鈕自己畫：只留一顆有語意、能用鍵盤操作的 input，外觀用 appearance:none 畫，
+   勾勾是 ::after 的兩條邊框轉 42°，填底上的字用 --acc-ink（四組填色都量過 ≥4.5:1）。 */
+input[type="checkbox"],
+input[type="radio"] {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  margin: 0;
+  cursor: pointer;
+  position: relative;
+  background: var(--card);
+  border: 1px solid var(--line3);
+  transition: background 0.16s, border-color 0.16s;
+}
+input[type="checkbox"] {
+  border-radius: 5px;
+}
+input[type="radio"] {
+  border-radius: 50%;
+}
+input[type="checkbox"]:checked,
+input[type="radio"]:checked {
+  background: var(--acc);
+  border-color: var(--acc);
+}
+input[type="checkbox"]:checked::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 5px;
+  height: 9px;
+  border: 2px solid var(--acc-ink);
+  border-top: 0;
+  border-left: 0;
+  transform: rotate(42deg);
+}
+input[type="radio"]:checked::after {
+  content: "";
+  position: absolute;
+  inset: 4px;
+  border-radius: 50%;
+  background: var(--acc-ink);
+}
+input[type="checkbox"]:disabled,
+input[type="radio"]:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.checks {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  gap: 7px;
+  max-height: 126px;
+  overflow: auto;
+  padding: var(--sp2);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r2);
+}
+.checks label span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 規則列的流程描述：這一段是散文，允許換行 */
+.flow {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  flex-wrap: wrap;
+  font-size: var(--fs0);
+  color: var(--dim2);
+}
+.flow svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.cchip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 19px;
+  padding: 0 6px;
+  border-radius: var(--r1);
+  font-size: 10px;
+  font-weight: 600;
+  background: var(--up);
+  border: 1px solid var(--tc, var(--line2));
+  color: var(--txt);
+  white-space: nowrap;
+}
+
+/* ── Modal ──
+   真的 app 的 modal 是 fixed（蓋滿整個視窗），預覽是 absolute（只蓋 app 外殼那一格）。 */
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 5, 6, 0.62);
+  backdrop-filter: blur(3px);
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  z-index: 60;
+}
+/* 寬度走 inline --mw（跟滑桿的 --p 同一套做法）：八個 modal 各有自己的寬度，
+   為每一種寬度多發明一個 class 只會讓這裡多五個看不出差別的名字。 */
+.modal {
+  width: min(var(--mw, 560px), 100%);
+  max-height: 100%;
+  display: flex;
+  flex-direction: column;
+  background: var(--card);
+  border: 1px solid var(--line2);
+  border-radius: var(--r4);
+  overflow: hidden;
+  box-shadow: 0 30px 70px -20px rgba(0, 0, 0, 0.8);
+}
+.modal > header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+  padding: var(--sp3);
+  border-bottom: 1px solid var(--line);
+  flex: none;
+}
+.modal > header h3 {
+  margin: 0;
+  font-size: var(--fs3);
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.modal > header p {
+  margin: 1px 0 0;
+  font-size: var(--fs0);
+  color: var(--dim2);
+}
+.modal .body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: var(--sp3);
+  display: grid;
+  gap: var(--sp4);
+}
+.modal > footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--sp2);
+  padding: var(--sp3);
+  border-top: 1px solid var(--line);
+  flex: none;
+}
+/* 截圖／偵測區域這兩個視窗本來就是「開起來就佔滿整個畫面」，
+   不是把 modal 拉大，而是整片鋪滿：外框與圓角都要收掉，否則邊上會露出一圈底色。 */
+.scrim.flush {
+  padding: 0;
+}
+.modal.sheet {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+  border: 0;
+  box-shadow: none;
+}
+/* header 三件套：強調色圖示磚、可壓縮的標題欄、右側動作區。
+   .htxt 一定要 min-width:0，否則長副標會把右邊的關閉鈕推出視窗。 */
+.mtile {
+  width: 32px;
+  height: 32px;
+  border-radius: var(--r2);
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--acc-soft);
+  border: 1px solid var(--acc-ring);
+  color: var(--acc-txt);
+}
+.mtile svg {
+  width: 17px;
+  height: 17px;
+}
+.modal > header .htxt {
+  flex: 1;
+  min-width: 0;
+}
+/* 標題那一行有時要並排狀態藥丸（後台：管理員是誰、幾個人待審核）。
+   h3 是 block，所以多包一層 flex；藥丸多的時候讓它自己換行，不要把右側動作區推出視窗。 */
+.modal > header .htxt .ttl {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+.modal > header .hact {
+  display: flex;
+  align-items: center;
+  gap: var(--sp1);
+  flex: none;
+  margin-left: auto;
+}
+/* 登入視窗的 header 是唯一一個直立置中的：它是整個 app 的門面，
+   而且沒有關閉鈕（沒登入就不能用），所以不需要留右側動作區的空間。
+   .htxt 在這裡要改回 flex:none＋width:100%，否則 column 方向的 flex:1 會把它拉高。 */
+.modal > header.hero {
+  flex-direction: column;
+  text-align: center;
+  gap: var(--sp2);
+  padding: var(--sp4) var(--sp3) var(--sp3);
+}
+.modal > header.hero .mtile {
+  width: 40px;
+  height: 40px;
+  border-radius: var(--r3);
+}
+.modal > header.hero .mtile svg {
+  width: 21px;
+  height: 21px;
+}
+.modal > header.hero .htxt {
+  flex: none;
+  width: 100%;
+  display: grid;
+  gap: 3px;
+}
+.modal > header.hero h3 {
+  font-size: var(--fs4);
+}
+.modal > header.hero p {
+  margin: 0;
+}
+.modal > header.hero .tagline {
+  font-size: var(--fs1);
+  color: var(--dim);
+}
+.modal > header.hero .cloud {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  font-size: var(--fs0);
+  color: var(--dim2);
+}
+.modal > header.hero .cloud svg {
+  width: 12px;
+  height: 12px;
+  flex: none;
+}
+.modal > header.hero .seg {
+  width: 100%;
+  margin-top: 2px;
+}
+
+/* ── 橫幅：登入視窗（後端沒設定／提示／錯誤／成功）、後台操作結果、更新視窗的錯誤與交棒 ──
+   一律「圖示 + 顏色」，不靠顏色單獨表意；文字是散文，允許折行（跟藥丸的 nowrap 不同）。 */
+.banner {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp2);
+  padding: 8px var(--sp3);
+  border-radius: var(--r2);
+  border: 1px solid var(--line2);
+  background: var(--sunk);
+  color: var(--dim);
+  font-size: var(--fs1);
+  line-height: 1.5;
+}
+.banner svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  margin-top: 2px;
+}
+.banner p {
+  margin: 0;
+  min-width: 0;
+}
+.banner b {
+  color: var(--txt);
+  font-weight: 600;
+}
+.banner .x {
+  margin-left: auto;
+  flex: none;
+}
+/* 橫幅裡的關閉鈕：.banner svg 那條給訊息圖示補的 2px 下移不該套到按鈕上，
+   否則叉叉會偏低半格。 */
+.banner .x svg {
+  margin-top: 0;
+}
+.banner.ok {
+  color: var(--ok);
+  border-color: rgba(76, 183, 130, 0.34);
+  background: rgba(76, 183, 130, 0.1);
+}
+.banner.warn {
+  color: var(--warn);
+  border-color: rgba(242, 201, 76, 0.32);
+  background: rgba(242, 201, 76, 0.1);
+}
+.banner.bad {
+  color: var(--bad);
+  border-color: rgba(235, 87, 87, 0.32);
+  background: rgba(235, 87, 87, 0.1);
+}
+.banner.info {
+  color: var(--acc-txt);
+  border-color: var(--acc-ring);
+  background: var(--acc-soft);
+}
+/* ── 直立式表單（標籤在上、欄位在下）──
+   .form/.frow 那一套是「左欄固定寬標籤 + 右邊控制項」的密集列，適合設定頁；
+   登入、開通碼、截圖右欄這些是一格一個問題，標籤壓在欄位上面才讀得順。 */
+.form.stack {
+  gap: var(--sp3);
+  container-type: inline-size;
+}
+.fgroup {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+/* label 本身是 grid 的子項，所以要自己開 flex，前面的小圖示（帳號、鎖頭、鑰匙）
+   與必填星號才排得成一行。 */
+.fgroup > label {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  font-size: var(--fs1);
+  font-weight: 500;
+  color: var(--dim);
+}
+.fgroup > label svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--dim2);
+}
+.fgroup .req {
+  color: var(--bad);
+  font-weight: 600;
+}
+/* 直立式表單裡的內嵌區塊：管理員金鑰那一格、開通頁最上面那段說明。
+   跟 .list 同一種下沉材質，但裡面放的是表單而不是列。 */
+.fbox {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border-radius: var(--r2);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  min-width: 0;
+}
+.fbox > p {
+  margin: 0;
+  font-size: var(--fs1);
+  color: var(--dim);
+  line-height: 1.6;
+}
+/* 並排兩格（設定密碼／確認密碼）。中文標籤在窄視窗會被擠爆，所以下面留一道 380px 的斷點。 */
+.fgrid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--sp2);
+  min-width: 0;
+}
+@container (max-width: 380px) {
+  .fgrid {
+    grid-template-columns: 1fr;
+  }
+}
+/* 小字補充說明。兩種位置共用一個名字：設定視窗每個區塊底下那一句（要跟 .list 隔開 6px），
+   以及直立式表單欄位底下的提示（那裡 .fgroup 的 grid gap 已經給了間距，所以把邊界收掉）。 */
+.hint {
+  margin: 6px 0 0;
+  font-size: var(--fs0);
+  color: var(--dim2);
+  line-height: 1.5;
+}
+.fgroup .hint {
+  margin: 0;
+}
+/* 直立式欄位比密集列的 24px 高一號，而且要吃滿整欄寬。
+   .frow input.field 的 300px 上限只管密集列，這裡不在 .frow 裡面。 */
+.field.lg {
+  height: 30px;
+  padding: 0 9px;
+  font-size: var(--fs2);
+  width: 100%;
+}
+textarea.field {
+  height: auto;
+  padding: 6px 9px;
+  line-height: 1.5;
+  resize: vertical;
+  width: 100%;
+}
+/* 開通碼：等寬、加字距、自動轉大寫顯示（值本身不動，只有外觀） */
+.field.code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+.mono {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+/* 搜尋框：圖示絕對定位在框內，輸入框自己讓出左邊的位置。
+   圖示要 pointer-events:none，否則點在放大鏡上不會 focus 到輸入框。 */
+.search {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+  flex: 1;
+}
+.search > svg {
+  position: absolute;
+  left: 9px;
+  width: 14px;
+  height: 14px;
+  color: var(--dim2);
+  pointer-events: none;
+}
+/* 輸入框自己不會填滿 flex 容器（<input> 有內建的固定寬度），所以要明寫 flex:1；
+   min-width:0 是為了讓它能被壓到比內建寬度更窄，窄視窗下才不會把旁邊的篩選鈕推出去。 */
+.search input {
+  flex: 1;
+  min-width: 0;
+  padding-left: 29px;
+}
+/* 行內編輯條（重設密碼、改備註）：按下表格列上的圖示鈕之後，從表格上方長出來的一條。
+   輸入框吃掉中間剩下的寬度，儲存與取消永遠在最右邊；窄的時候整條自己換行。
+   用強調色外框是因為它是「暫時開著、等你處理完」的狀態，跟旁邊的靜態區塊要分得出來。 */
+.editbar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--sp2);
+  padding: 8px var(--sp2);
+  border-radius: var(--r2);
+  background: var(--sunk);
+  border: 1px solid var(--acc-ring);
+}
+.editbar > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--acc-txt);
+}
+.editbar b {
+  font-size: var(--fs1);
+  font-weight: 600;
+}
+.editbar .field {
+  flex: 1;
+  min-width: 150px;
+  max-width: 320px;
+}
+/* ── 表格（帳號清單、開通碼紀錄）──
+   th 用 sticky：清單會捲，欄名捲掉就看不出哪一欄是什麼。
+   sticky 要生效，捲動容器必須是 .tblwrap 而不是更外層。 */
+.tblwrap {
+  overflow: auto;
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  background: var(--sunk);
+}
+.tbl {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+  font-size: var(--fs1);
+}
+.tbl th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 7px var(--sp2);
+  font-size: var(--fs0);
+  font-weight: 600;
+  color: var(--dim2);
+  letter-spacing: 0.05em;
+  white-space: nowrap;
+  background: var(--card2);
+  border-bottom: 1px solid var(--line);
+}
+.tbl td {
+  padding: 7px var(--sp2);
+  border-bottom: 1px solid var(--line);
+  vertical-align: middle;
+  color: var(--dim);
+  /* 不折行。中文可以在任何兩個字之間斷行，所以欄位一被壓窄，內容就會變成「一字一行」的直排；
+     全部 nowrap 之後每一欄都會去要它真正需要的寬度，真的擠不下時由 .tblwrap 橫向捲動收尾。 */
+  white-space: nowrap;
+}
+.tbl tbody tr:last-child td {
+  border-bottom: 0;
+}
+.tbl tbody tr:hover {
+  background: var(--up);
+}
+.tbl b {
+  color: var(--txt);
+  font-weight: 600;
+}
+/* 表格裡名稱底下那一行小字（暱稱、備註、由誰開通、註冊時間）。
+   字級與顏色沿用 .fsub，這裡只補表格要的兩件事：自己佔一行、太長就用「…」收掉。
+   ⚠ 不要拿 .s 來放這種小字：.s 在這份樣式表裡是 1px×9px 的分隔點，
+   套上去會變成寬 1px 的盒子，中文就被擠成一字一行的直排。 */
+.tbl .fsub {
+  display: block;
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.tbl .r {
+  text-align: right;
+}
+/* 「備註」整欄也是自由填寫的，跟上面 .tbl .s 同一個理由要給上限（只是字級與顏色照 td 走）。 */
+.tbl .memo {
+  max-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+/* 動作欄：按鈕多的時候整顆換行，不要把表格撐寬 */
+.tbl .acts {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.tbl .none {
+  padding: 34px var(--sp3);
+  text-align: center;
+  color: var(--dim2);
+}
+/* 首字方塊（沒有頭像時的替代） */
+.ava {
+  width: 24px;
+  height: 24px;
+  border-radius: var(--r1);
+  display: grid;
+  place-items: center;
+  flex: none;
+  background: var(--up);
+  border: 1px solid var(--line2);
+  font-size: var(--fs1);
+  font-weight: 600;
+  color: var(--dim);
+}
+/* 開通碼本體：可以一鍵全選（select-all），所以要看得出是「一段值」而不是一句話 */
+.codepill {
+  display: inline-flex;
+  align-items: center;
+  height: 20px;
+  padding: 0 7px;
+  border-radius: var(--r1);
+  background: var(--acc-soft);
+  border: 1px solid var(--acc-ring);
+  color: var(--acc-txt);
+  font-family: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+  font-size: var(--fs1);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+  user-select: all;
+}
+/* ── 真的進度條 ──
+   .tcard .prog 只有 2px 而且綁在計時卡上（那是卡片頂緣的細線），
+   下載進度需要看得出剩多少，所以另立一條 6px 的。 */
+.prog2 {
+  height: 6px;
+  border-radius: 99px;
+  background: var(--up);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+.prog2 i {
+  display: block;
+  height: 100%;
+  border-radius: 99px;
+  background: var(--acc);
+  transition: width 0.2s ease-out;
+}
+/* 版本說明：<pre> 預設是等寬字，而版本說明是給人讀的中文，所以明確吃回代幣字體堆疊。
+   這一條就是 UpdateModal 那個 font-sans 的根因修法——不是再貼一個工具類蓋回去。 */
+.notes {
+  margin: 0;
+  padding: var(--sp2) var(--sp3);
+  border-radius: var(--r2);
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  font-family: var(--font);
+  font-size: var(--fs1);
+  line-height: 1.65;
+  color: var(--dim);
+  white-space: pre-wrap;
+  max-height: 190px;
+  overflow: auto;
+}
+/* ── canvas 工作台（截圖視窗、偵測區域視窗）──
+   .stage 底色不吃主題：上面躺的是使用者擷取到的畫面，不是我們的介面，
+   跟 .canvas 用同一個 #0a0e12（淺色主題下也一樣），否則白底會讓人以為畫面破圖。 */
+.work {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  overflow: hidden;
+  position: relative;
+}
+.stage {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+  background: #0a0e12;
+  user-select: none;
+}
+/* 浮在畫布上的工具列位置。列本身用 .glass（深底玻璃 + --acc-ondark），
+   跟主畫面 HUD 是同一種材質，因為它們的處境一樣：底下是別人的影像。 */
+.stagebar {
+  position: absolute;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--sp2);
+}
+.stagebar.tl {
+  top: var(--sp3);
+  left: var(--sp3);
+}
+.stagebar.tr {
+  top: var(--sp3);
+  right: var(--sp3);
+}
+.stagebar.bl {
+  bottom: var(--sp3);
+  left: var(--sp3);
+}
+/* 右側設定欄。320px 是照 CropModal 原本的 w-80 抄的，不是自己挑的數字。 */
+.rail {
+  width: 320px;
+  flex: none;
+  overflow: auto;
+  padding: var(--sp3);
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp3);
+  background: var(--card);
+  border-left: 1px solid var(--line);
+}
+/* ── 來源卡網格（畫面來源選擇）── */
+.srcgrid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(206px, 1fr));
+  gap: var(--sp3);
+}
+.srccard {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+  text-align: left;
+  overflow: hidden;
+  cursor: pointer;
+  background: var(--sunk);
+  border: 1px solid var(--line);
+  border-radius: var(--r3);
+  transition: border-color 0.16s, transform 0.16s;
+}
+.srccard:hover {
+  border-color: var(--acc);
+  transform: translateY(-1px);
+}
+/* 縮圖區底色跟畫布一致（深色不隨主題翻）：裡面是使用者的視窗畫面 */
+.srccard .shot {
+  position: relative;
+  aspect-ratio: 16 / 9;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  background: #0a0e12;
+}
+.srccard .shot img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.srccard .shot > svg {
+  width: 26px;
+  height: 26px;
+  color: #6b7280;
+}
+.srccard .ov {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  gap: 4px;
+  opacity: 0;
+  transition: opacity 0.16s;
+  background: rgba(4, 5, 6, 0.62);
+  backdrop-filter: blur(2px);
+  color: var(--acc-ondark);
+  font-size: var(--fs1);
+  font-weight: 600;
+}
+.srccard:hover .ov,
+.srccard:focus-visible .ov {
+  opacity: 1;
+}
+.srccard .ov svg {
+  width: 18px;
+  height: 18px;
+}
+.srccard .nm {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 7px 9px;
+  border-top: 1px solid var(--line);
+  min-width: 0;
+}
+.srccard .nm img {
+  width: 16px;
+  height: 16px;
+  flex: none;
+  border-radius: 3px;
+}
+.srccard .nm > svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--dim2);
+}
+.srccard .nm span {
+  font-size: var(--fs1);
+  color: var(--txt);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* 大尺寸空狀態：清單整片空的時候（找不到視窗、沒有任何開通碼）用這個，
+   .empty 原本的 26px padding 在一整片空白的 modal 裡看起來像沒載完。 */
+.empty.big {
+  padding: 52px 16px;
+  gap: var(--sp2);
+}
+.empty.big svg {
+  width: 30px;
+  height: 30px;
+}
+/* ── 顏色圓點選擇器（截圖視窗的辨識框顏色）──
+   選中用白色描邊 + 一圈深色陰影：色塊本身是飽和色，這樣在深淺兩種底色下都看得出邊界。 */
+.dots {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.dots button {
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border-radius: 99px;
+  border: 2px solid transparent;
+  cursor: pointer;
+  display: grid;
+  place-items: center;
+  transition: transform 0.12s;
+}
+.dots button:hover {
+  transform: scale(1.12);
+}
+.dots button[aria-pressed="true"] {
+  border-color: #fff;
+  box-shadow: 0 0 0 1px rgba(0, 0, 0, 0.4);
+}
+.dots svg {
+  width: 12px;
+  height: 12px;
+  color: #fff;
+  filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.5));
+}
+/* 截圖預覽方塊。外框顏色＝該目標的顏色，用 inline --tc 傳（跟 .cchip 同一套做法）。
+   image-rendering:pixelated 是必要的：使用者要看清楚自己框到的是哪幾個像素。 */
+.shot80 {
+  width: 76px;
+  height: 76px;
+  flex: none;
+  padding: 3px;
+  border-radius: var(--r2);
+  border: 2px solid var(--tc, var(--line2));
+  background: var(--sunk);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+.shot80 img {
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  image-rendering: pixelated;
+}
+.shot80 span {
+  font-size: var(--fs0);
+  color: var(--dim2);
+}
+/* 浮動玻璃列的兩個補充：
+   .wrap 讓「整個項目」換行（項目自己還是 nowrap，中文不折字）——截圖視窗底下那條
+   同時放了三組讀數和一個四向微調，窄視窗塞不進一列；
+   .k 是讀數前面的欄名（「原圖:」「座標:」），比值本身暗一級。 */
+.glass.wrap {
+  height: auto;
+  min-height: 28px;
+  max-width: 100%;
+  padding: 3px 9px;
+  flex-wrap: wrap;
+  row-gap: 3px;
+}
+.glass .k {
+  color: var(--dim2);
+}
+.glass b {
+  color: var(--txt);
+  font-weight: 600;
+}
+
+
+
+
+
+
+
+
+
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+.hide {
+  display: none !important;
+}
+
+/* ── 桌面置頂懸浮計時窗（FloatingTimerOverlay）──
+   它浮在使用者的遊戲畫面上，底下一律是別人的影像，所以永遠是深底玻璃：
+   不可以吃 --bg/--card/--txt（main.tsx 的 applyAppearance 也跑在 #floating，
+   選淺色主題時整塊會翻成白底白字），強調色只走 --acc-ondark 這一組。
+   幾何代幣（--r1/--r2/--r3）不隨主題翻轉，可以放心用。 */
+.fw-bar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(8, 9, 10, 0.82);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(12px) saturate(1.5);
+  -webkit-backdrop-filter: blur(12px) saturate(1.5);
+  color: #d7dadf;
+  font-size: 9px;
+  font-weight: 600;
+  cursor: move;
+  transition: opacity 0.15s ease;
+}
+.fw-bar > svg {
+  width: 10px;
+  height: 10px;
+  color: var(--acc-ondark);
+  flex: none;
+}
+.fw-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 2px;
+  border-radius: var(--r1);
+  background: transparent;
+  border: 0;
+  color: #9ca3ad;
+  font-size: 8px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease;
+}
+.fw-btn svg {
+  width: 10px;
+  height: 10px;
+}
+.fw-btn:hover {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.1);
+}
+.fw-btn[aria-pressed="true"] {
+  background: var(--acc-ondark);
+  color: #08090a;
+}
+.fw-btn.x:hover {
+  color: #ff7070;
+  background: rgba(255, 112, 112, 0.14);
+}
+/* 快速設定小面板：圖示大小／字體大小／顯示名稱 */
+.fw-pop {
+  position: absolute;
+  top: 26px;
+  z-index: 50;
+  display: grid;
+  gap: 6px;
+  padding: 7px;
+  min-width: 172px;
+  border-radius: var(--r3);
+  background: rgba(8, 9, 10, 0.9);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.6);
+  backdrop-filter: blur(16px) saturate(1.6);
+  -webkit-backdrop-filter: blur(16px) saturate(1.6);
+  color: #e7e9ec;
+  font-size: 10px;
+}
+.fw-pop .r {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--sp2);
+}
+.fw-pop .r + .r {
+  padding-top: 6px;
+  border-top: 1px solid rgba(255, 255, 255, 0.09);
+}
+.fw-pop .k {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  color: #9ca3ad;
+  white-space: nowrap;
+}
+.fw-pop .k svg {
+  width: 11px;
+  height: 11px;
+  color: var(--acc-ondark);
+  flex: none;
+}
+.fw-pop .v {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+}
+.fw-sz {
+  min-width: 20px;
+  height: 17px;
+  padding: 0 4px;
+  border-radius: var(--r1);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  color: #9ca3ad;
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+  transition: color 0.12s ease, background 0.12s ease, border-color 0.12s ease;
+}
+.fw-sz:hover {
+  color: #ffffff;
+  border-color: rgba(255, 255, 255, 0.2);
+}
+.fw-sz[aria-pressed="true"] {
+  background: var(--acc-ondark);
+  border-color: transparent;
+  color: #08090a;
+}
+/* 單顆計時磚：上方秒數／中間圖示／下方名稱。三段的字級與尺寸都由 props 帶進來，
+   所以這裡只管外觀，不寫任何寬高（寫死會蓋掉使用者選的圖示大小）。 */
+.fw-tile {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+  cursor: pointer;
+  transition: transform 0.12s ease;
+}
+.fw-tile:hover {
+  transform: scale(1.05);
+}
+.fw-tile:active {
+  transform: scale(0.95);
+}
+.fw-num {
+  color: var(--acc-ondark);
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.02em;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 1);
+}
+.fw-hk {
+  padding: 0 5px;
+  border-radius: var(--r1);
+  background: rgba(8, 9, 10, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  color: #f7f8f8;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+.fw-ico {
+  position: relative;
+  overflow: hidden;
+  display: grid;
+  place-items: center;
+  border-radius: var(--r2);
+  background: rgba(8, 9, 10, 0.92);
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.55);
+}
+.fw-ico img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  padding: 1px;
+}
+/* 冷卻遮罩：從上緣往下蓋 percent%（top 定住、height 給百分比），
+   跟原本 inset-0＋height 的行為一樣，剩餘時間越少、遮罩越短。 */
+.fw-wipe {
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  background: rgba(0, 0, 0, 0.55);
+  pointer-events: none;
+  transition: height 0.1s linear;
+}
+.fw-nm {
+  display: block;
+  color: #ffffff;
+  font-weight: 700;
+  line-height: 1.25;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 1);
+}
+.fw-empty {
+  padding: 5px 10px;
+  border-radius: var(--r2);
+  background: rgba(8, 9, 10, 0.86);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.5);
+  backdrop-filter: blur(10px);
+  -webkit-backdrop-filter: blur(10px);
+  color: #d7dadf;
+  font-size: 10px;
+}
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

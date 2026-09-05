@@ -76,6 +76,14 @@ export interface MatchLogEntry {
   box: Rect;
 }
 
+/**
+ * 外觀只有兩個可調項目，值必須跟 src/styles/tokens.css 的 `html.acc-*` / `html.light`
+ * 對得上（套用的程式在 src/utils/appearance.ts）。圓角、密度、材質、圖示是定案值，
+ * 寫死在代幣層，不做成設定。
+ */
+export type AccentColor = 'emerald' | 'indigo' | 'blue' | 'graphite';
+export type ThemeMode = 'dark' | 'light';
+
 export interface GlobalSettings {
   scanFps: number; // 5 to 60 FPS (or 0 for uncapped max speed)
   matchAlgorithm: 'ncc' | 'fast_color'; // Normalized Cross Correlation vs Fast Color SAD
@@ -87,6 +95,10 @@ export interface GlobalSettings {
   showRoiOnStream: boolean;
   confettiOnHit: boolean;
   autoScrollLogs: boolean;
+  /** 顏色（四組強調色）。舊設定檔沒有這個欄位，會由 DEFAULT_SETTINGS 補上 emerald。 */
+  accent: AccentColor;
+  /** 深淺。舊設定檔沒有這個欄位，會由 DEFAULT_SETTINGS 補上 dark。 */
+  theme: ThemeMode;
 }
 
 /** A 子目錄 in the target list. Membership is by `Target.groupId`. */

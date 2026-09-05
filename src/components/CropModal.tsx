@@ -1,4 +1,21 @@
+/**
+ * 高精度截圖視窗：從擷取到的整張畫面裡框出一小塊，存成偵測目標，或存成計時器圖示。
+ *
+ * 外殼走 components.css 的 .scrim.flush ＋ .modal.sheet（開起來就佔滿畫面），
+ * 按「還原視窗」才收成一般 .modal。工作區是 .work ＞ .stage（左）＋ .rail（右，320px）：
+ * .stage 的底色寫死 #0a0e12，**不吃主題**——上面躺的是使用者擷取到的畫面，不是我們的介面；
+ * 同理，浮在畫面上的三條工具列一律用 .glass（深底玻璃＋亮字），開關狀態只換字色不換底色。
+ *
+ * 畫布裡面畫的每一個數字都是「框得準不準」的一部分，換樣式的時候一個都不能動：
+ * 外圈遮罩 0.62、選取框 1.5px、三等分格線 0.25／dash [3,3]、8 個手柄 8px、
+ * 命中半徑 12px、最小邊長 4px、滾輪 1.15／0.87、縮放上下限 0.6～6.0、
+ * 放大鏡半徑 max(65, 原圖寬/18)、方向鍵 1px（Shift 10px）。
+ *
+ * isForTimerIcon 是一條完全獨立的出口：handleSave 走到它就 onSaveTimerIcon() 後直接 return，
+ * 絕不建立偵測目標。右欄在這個模式下也只顯示一張說明橫幅與兩顆決定。
+ */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+
 import { Target, SoundType, Rect } from '../types';
 import { playAlertSound } from '../utils/audio';
 import { COLOR_PALETTE, getNextColor } from '../utils/storage';
@@ -759,93 +776,91 @@ export const CropModal: React.FC<CropModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md transition-all duration-200 ${
-        isFullscreen ? 'p-0' : 'p-3 lg:p-4'
-      }`}
-    >
+    <div className={`scrim${isFullscreen ? ' flush' : ''}`}>
       <div
-        className={`bg-slate-950 border border-slate-700/80 shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${
-          isFullscreen ? 'w-screen h-screen rounded-none' : 'w-full max-w-7xl rounded-2xl max-h-[95vh]'
-        }`}
+        className={`modal${isFullscreen ? ' sheet' : ''}`}
+        style={{ '--mw': '1280px' } as React.CSSProperties}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="crop-title"
       >
-        {/* Top Header Bar */}
-        <div className="flex items-center justify-between px-5 py-3 border-b border-slate-800 bg-slate-950/95 z-30 shrink-0">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400">
-              <Scissors className="w-5 h-5" />
+        <header>
+          <div className="mtile">
+            <Scissors />
+          </div>
+          <div className="htxt">
+            <div className="ttl">
+              <h3 id="crop-title">
+                {isForTimerIcon
+                  ? '計時器圖示截圖（圖示模式）'
+                  : editingTarget
+                    ? '編輯目標截圖與參數'
+                    : '獨立全螢幕高精度截圖視窗'}
+              </h3>
+              <span className="tag">{isFullscreen ? '全螢幕沉浸模式' : '視窗模式'}</span>
             </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-base font-bold text-white">
-                  {isForTimerIcon ? '計時器圖示截圖（圖示模式）' : editingTarget ? '編輯目標截圖與參數' : '獨立全螢幕高精度截圖視窗'}
-                </h2>
-                <span className="px-2 py-0.5 rounded-full text-[10px] font-bold bg-indigo-500/20 text-indigo-300 border border-indigo-500/40">
-                  {isFullscreen ? '全螢幕沉浸模式' : '視窗模式'}
-                </span>
-              </div>
-              <p className="text-xs text-slate-400 hidden sm:block">
-                滾輪放大/縮小畫布 • 空白鍵/中鍵拖曳平移 • 8 向手柄 • 4x/8x 放大鏡 • 方向鍵 1px 微調
-              </p>
-            </div>
+            <p>滾輪放大/縮小畫布 • 空白鍵/中鍵拖曳平移 • 8 向手柄 • 4x/8x 放大鏡 • 方向鍵 1px 微調</p>
           </div>
 
-          {/* Quick Header Buttons */}
-          <div className="flex items-center gap-2">
-            {/* Toggle Fullscreen / Window Mode */}
+          <div className="hact">
             <button
               type="button"
               onClick={() => setIsFullscreen(!isFullscreen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-xs font-semibold transition-colors"
+              className="btn"
               title={isFullscreen ? '還原視窗模式 (F 鍵)' : '切換全螢幕放大 (F 鍵)'}
             >
-              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-              <span>{isFullscreen ? '還原視窗' : '全螢幕放大'}</span>
+              {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+              {isFullscreen ? '還原視窗' : '全螢幕放大'}
             </button>
 
-            {/* Toggle Sidebar */}
+            {/* 面板收起來的時候這顆要浮起（.btn），因為它是「把面板找回來」的唯一入口；
+                面板開著時它只是收合鈕，退成 ghost。 */}
             <button
               type="button"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
-              className={`p-1.5 rounded-lg border text-xs transition-colors ${
-                isSidebarOpen
-                  ? 'bg-slate-850 text-slate-300 border-slate-700 hover:text-white'
-                  : 'bg-indigo-600 text-white border-indigo-500'
-              }`}
+              className={`btn${isSidebarOpen ? ' ghost' : ''} ico-only`}
+              aria-pressed={!isSidebarOpen}
               title={isSidebarOpen ? '收合右側設定面板 (以最大化畫布)' : '展開右側設定面板'}
+              aria-label={isSidebarOpen ? '收合右側設定面板' : '展開右側設定面板'}
             >
-              {isSidebarOpen ? <PanelRightClose className="w-4 h-4" /> : <PanelRightOpen className="w-4 h-4" />}
+              {isSidebarOpen ? <PanelRightClose /> : <PanelRightOpen />}
             </button>
 
-            {/* Close */}
             <button
               type="button"
               onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors ml-1"
+              className="btn ghost ico-only"
+              title="關閉"
+              aria-label="關閉"
             >
-              <X className="w-5 h-5" />
+              <X />
             </button>
           </div>
-        </div>
+        </header>
 
-        {/* Main Work Area (Canvas + Floating/Sidebar Settings) */}
-        <div className="flex-1 flex overflow-hidden relative">
-          {/* Canvas Viewport (Left/Center) */}
+        {/* 畫布工作台：左邊 .stage（底色寫死 #0a0e12，不吃主題，因為上面躺的是
+            使用者擷取到的畫面），右邊 .rail 是 320px 的設定欄。 */}
+        <div className="work">
           <div
             ref={containerRef}
             onWheel={handleWheel}
             onContextMenu={(e) => e.preventDefault()}
-            className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden select-none"
+            className="stage"
             style={{
               cursor: isPanning ? 'grabbing' : isSpacePressed ? 'grab' : cursorStyle,
             }}
           >
             {/* Scaled & Panned Canvas Container */}
             <div
-              className="relative flex items-center justify-center transition-transform duration-75 will-change-transform"
               style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
                 transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${canvasZoom})`,
                 transformOrigin: 'center center',
+                transition: 'transform 75ms',
+                willChange: 'transform',
               }}
             >
               <canvas
@@ -856,314 +871,343 @@ export const CropModal: React.FC<CropModalProps> = ({
                 onPointerMove={handlePointerMove}
                 onPointerUp={handlePointerUp}
                 onPointerLeave={() => setMouseImgPos(null)}
-                className="max-w-none shadow-2xl border border-slate-800 touch-none"
                 style={{
+                  maxWidth: 'none',
                   maxHeight: isFullscreen ? 'calc(100vh - 100px)' : 'calc(80vh - 120px)',
                   width: 'auto',
                   height: 'auto',
+                  display: 'block',
+                  touchAction: 'none',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  boxShadow: '0 30px 70px -20px rgba(0, 0, 0, 0.8)',
                 }}
               />
             </div>
 
-            {/* Floating Top-Left Canvas Controls (Zoom / Pan / Fit) */}
-            <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md px-2 py-1.5 rounded-xl border border-slate-700/80 shadow-2xl text-xs">
-              {/* Zoom Out */}
-              <button
-                type="button"
-                onClick={() => setCanvasZoom((z) => Math.max(0.6, Number((z - 0.25).toFixed(2))))}
-                className="p-1 text-slate-300 hover:text-white hover:bg-slate-800 rounded-md transition-colors"
-                title="縮小畫布 (或滾輪向下)"
-              >
-                <ZoomOut className="w-4 h-4" />
-              </button>
-
-              {/* Zoom % */}
-              <span className="font-mono font-bold text-white px-1 min-w-[45px] text-center">
-                {Math.round(canvasZoom * 100)}%
-              </span>
-
-              {/* Zoom In */}
-              <button
-                type="button"
-                onClick={() => setCanvasZoom((z) => Math.min(6.0, Number((z + 0.25).toFixed(2))))}
-                className="p-1 text-slate-300 hover:text-white hover:bg-slate-800 rounded-md transition-colors"
-                title="放大畫布 (或滾輪向上)"
-              >
-                <ZoomIn className="w-4 h-4" />
-              </button>
-
-              <div className="h-4 w-px bg-slate-700 mx-0.5" />
-
-              {/* Reset Zoom & Pan */}
-              <button
-                type="button"
-                onClick={handleResetZoom}
-                className="px-2 py-1 text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 rounded-md transition-colors flex items-center gap-1"
-                title="還原原始大小 (100%)"
-              >
-                <RotateCcw className="w-3 h-3" />
-                100%
-              </button>
-
-              {/* Magnifier Toggle */}
-              <button
-                type="button"
-                onClick={() => setShowMagnifier(!showMagnifier)}
-                className={`px-2 py-1 rounded-md text-[11px] font-semibold transition-colors flex items-center gap-1 ${
-                  showMagnifier ? 'bg-indigo-600 text-white' : 'text-slate-400 hover:text-white hover:bg-slate-800'
-                }`}
-              >
-                <Crosshair className="w-3 h-3" />
-                放大鏡
-              </button>
-              {showMagnifier && (
-                <div className="flex items-center gap-0.5 border-l border-slate-700 pl-1">
-                  {[2, 4, 8].map((z) => (
-                    <button
-                      key={z}
-                      type="button"
-                      onClick={() => setZoomLevel(z)}
-                      className={`px-1 py-0.5 rounded text-[10px] font-bold ${
-                        zoomLevel === z
-                          ? 'bg-indigo-500/40 text-indigo-300 border border-indigo-500/50'
-                          : 'text-slate-400 hover:text-white'
-                      }`}
-                    >
-                      {z}x
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
-            {/* Floating Bottom-Left Precision Info Bar */}
-            <div className="absolute bottom-4 left-4 z-20 flex flex-wrap items-center gap-3 bg-slate-900/90 backdrop-blur-md px-3 py-2 rounded-xl border border-slate-700/80 shadow-2xl text-xs text-slate-300 font-mono">
-              <div>
-                原圖: <strong className="text-white">{sourceWidth}×{sourceHeight}</strong>
-              </div>
-              <span className="text-slate-600">•</span>
-              <div>
-                截圖: <strong className="text-emerald-400 font-bold">{Math.round(selection.width)}×{Math.round(selection.height)}px</strong>
-              </div>
-              <span className="text-slate-600">•</span>
-              <div>
-                座標: <strong className="text-cyan-400">({Math.round(selection.x)}, {Math.round(selection.y)})</strong>
-              </div>
-
-              {/* 1px Nudge Direction D-Pad */}
-              <div className="flex items-center gap-1 pl-2 border-l border-slate-700">
-                <span className="text-[11px] text-slate-400 font-sans">微調:</span>
+            {/* 浮在別人的影像上的工具列一律用 .glass（深底玻璃＋亮字，不吃主題）。
+                .glass.pad0 會把裡面的 .btn 收成 24×24 方塊，帶文字的那幾顆就地把寬度放回 auto。
+                開關狀態不能靠換底色（淺色主題的 .btn 底色會在深色玻璃裡糊掉），改成換字色。 */}
+            <div className="stagebar tl">
+              <div className="glass pad0">
                 <button
                   type="button"
-                  onClick={() => nudgeSelection(-1, 0)}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-300"
-                  title="向左 1px (Shift+← 10px)"
+                  onClick={() => setCanvasZoom((z) => Math.max(0.6, Number((z - 0.25).toFixed(2))))}
+                  className="btn ghost ico-only"
+                  title="縮小畫布 (或滾輪向下)"
+                  aria-label="縮小畫布"
                 >
-                  <ArrowLeft className="w-3.5 h-3.5" />
+                  <ZoomOut />
                 </button>
+
+                <span
+                  className="num"
+                  style={{ fontWeight: 600, minWidth: 38, textAlign: 'center' }}
+                >
+                  {Math.round(canvasZoom * 100)}%
+                </span>
+
                 <button
                   type="button"
-                  onClick={() => nudgeSelection(1, 0)}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-300"
-                  title="向右 1px (Shift+→ 10px)"
+                  onClick={() => setCanvasZoom((z) => Math.min(6.0, Number((z + 0.25).toFixed(2))))}
+                  className="btn ghost ico-only"
+                  title="放大畫布 (或滾輪向上)"
+                  aria-label="放大畫布"
                 >
-                  <ArrowRight className="w-3.5 h-3.5" />
+                  <ZoomIn />
                 </button>
+
+                <span className="sep" />
+
                 <button
                   type="button"
-                  onClick={() => nudgeSelection(0, -1)}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-300"
-                  title="向上 1px (Shift+↑ 10px)"
+                  onClick={handleResetZoom}
+                  className="btn ghost"
+                  style={{ width: 'auto', padding: '0 6px' }}
+                  title="還原原始大小 (100%)"
                 >
-                  <ArrowUp className="w-3.5 h-3.5" />
+                  <RotateCcw />
+                  100%
                 </button>
+
+                <span className="sep" />
+
+                {/* 開著的時候用強調色的字，不是換底色：這一顆躺在深色玻璃上。 */}
                 <button
                   type="button"
-                  onClick={() => nudgeSelection(0, 1)}
-                  className="p-1 hover:bg-slate-800 rounded text-slate-300"
-                  title="向下 1px (Shift+↓ 10px)"
+                  onClick={() => setShowMagnifier(!showMagnifier)}
+                  className="btn ghost"
+                  style={{
+                    width: 'auto',
+                    padding: '0 6px',
+                    ...(showMagnifier ? { color: 'var(--acc-txt)' } : null),
+                  }}
+                  aria-pressed={showMagnifier}
+                  title="開關 4x/8x 放大鏡"
                 >
-                  <ArrowDown className="w-3.5 h-3.5" />
+                  <Crosshair />
+                  放大鏡
                 </button>
+                {showMagnifier && (
+                  <>
+                    <span className="sep" />
+                    {[2, 4, 8].map((z) => (
+                      <button
+                        key={z}
+                        type="button"
+                        onClick={() => setZoomLevel(z)}
+                        className="btn ghost"
+                        style={{
+                          width: 'auto',
+                          padding: '0 5px',
+                          ...(zoomLevel === z ? { color: 'var(--acc-txt)', fontWeight: 600 } : null),
+                        }}
+                        aria-pressed={zoomLevel === z}
+                        title={`放大鏡倍率 ${z}x`}
+                      >
+                        {z}x
+                      </button>
+                    ))}
+                  </>
+                )}
               </div>
             </div>
 
-            {/* Quick Unhide Sidebar Floating Button (if collapsed) */}
+            {/* 底下這條同時放三組讀數和一個四向微調，窄視窗塞不進一列，所以用 .glass.wrap
+                （會換行、max-width 100%）。.k 是欄名、<b> 是值；「截圖」是使用者正在調的那一個，
+                給強調色，另外兩個維持一般字色。原本整條寫死 font-sans，把代幣的字體堆疊蓋掉了，拿掉。 */}
+            <div className="stagebar bl" style={{ maxWidth: 'calc(100% - var(--sp3) * 2)' }}>
+              <div className="glass wrap">
+                <span>
+                  <span className="k">原圖: </span>
+                  <b className="num">
+                    {sourceWidth}×{sourceHeight}
+                  </b>
+                </span>
+                <span className="sep" />
+                <span>
+                  <span className="k">截圖: </span>
+                  <b className="num" style={{ color: 'var(--acc-txt)' }}>
+                    {Math.round(selection.width)}×{Math.round(selection.height)}px
+                  </b>
+                </span>
+                <span className="sep" />
+                <span>
+                  <span className="k">座標: </span>
+                  <b className="num">
+                    ({Math.round(selection.x)}, {Math.round(selection.y)})
+                  </b>
+                </span>
+
+                <span className="sep" />
+                <span className="k">微調:</span>
+                {(
+                  [
+                    [ArrowLeft, -1, 0, '向左 1px (Shift+← 10px)', '向左微調 1px'],
+                    [ArrowRight, 1, 0, '向右 1px (Shift+→ 10px)', '向右微調 1px'],
+                    [ArrowUp, 0, -1, '向上 1px (Shift+↑ 10px)', '向上微調 1px'],
+                    [ArrowDown, 0, 1, '向下 1px (Shift+↓ 10px)', '向下微調 1px'],
+                  ] as const
+                ).map(([Icon, dx, dy, tip, label]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => nudgeSelection(dx, dy)}
+                    className="btn ghost ico-only"
+                    style={{ width: 24, height: 24, borderRadius: 'var(--r1)' }}
+                    title={tip}
+                    aria-label={label}
+                  >
+                    <Icon />
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            {/* 面板收起來的時候，右上角補一組浮動入口：把面板找回來，或直接存檔。
+                這一組也躺在使用者的影像上，所以同樣是 .glass；儲存是主要決定，用 .btn pri。 */}
             {!isSidebarOpen && (
-              <div className="absolute top-4 right-4 z-20 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setIsSidebarOpen(true)}
-                  className="px-3.5 py-2 rounded-xl bg-slate-900/90 border border-slate-700/80 backdrop-blur-md text-white text-xs font-bold shadow-2xl flex items-center gap-2 hover:bg-slate-800"
-                >
-                  <PanelRightOpen className="w-4 h-4 text-emerald-400" />
-                  展開設定面板
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className="px-4 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-bold shadow-lg shadow-emerald-950/60 flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-4 h-4" />
-                  儲存目標
-                </button>
+              <div className="stagebar tr">
+                <div className="glass pad0">
+                  <button
+                    type="button"
+                    onClick={() => setIsSidebarOpen(true)}
+                    className="btn ghost"
+                    style={{ width: 'auto', padding: '0 8px' }}
+                    title="展開設定面板"
+                  >
+                    <PanelRightOpen />
+                    展開設定面板
+                  </button>
+                  <span className="sep" />
+                  <button
+                    type="button"
+                    onClick={handleSave}
+                    className="btn pri"
+                    style={{ width: 'auto', padding: '0 8px' }}
+                  >
+                    <Sparkles />
+                    儲存目標
+                  </button>
+                </div>
               </div>
             )}
           </div>
 
-          {/* Target Settings Side Panel (Right) */}
+          {/* 右邊的設定欄。.rail 是固定 320px、自己會滾的一欄（那個寬度就是原本 w-80 的數字），
+              裡面所有欄位走 .fgroup／.fbox／.field 那一套。 */}
           {isSidebarOpen && (
-            <div className="w-80 lg:w-96 bg-slate-900 border-l border-slate-800 p-5 flex flex-col gap-4 overflow-y-auto z-20 shrink-0 shadow-2xl">
-              {/* Cropped Preview Thumbnail */}
-              <div className="flex items-center gap-3.5 p-3 bg-slate-950 rounded-xl border border-slate-800">
-                <div
-                  className="w-20 h-20 rounded-lg border-2 flex items-center justify-center p-1 bg-slate-900 overflow-hidden shrink-0 shadow-inner"
-                  style={{ borderColor: color }}
-                >
+            <div className="rail">
+              {/* 截圖預覽。.shot80 是 76px 的方框，外框顏色用 inline --tc 傳這個目標自己的顏色，
+                  跟畫布上的選取框、HUD 標籤同一個色。 */}
+              <div
+                className="fbox"
+                style={{ gridTemplateColumns: 'auto 1fr', alignItems: 'center', gap: 'var(--sp3)' }}
+              >
+                <div className="shot80" style={{ '--tc': color } as React.CSSProperties}>
                   {croppedPreviewUrl ? (
-                    <img
-                      src={croppedPreviewUrl}
-                      alt="Cropped Preview"
-                      className="max-w-full max-h-full object-contain image-rendering-pixelated"
-                    />
+                    <img src={croppedPreviewUrl} alt="Cropped Preview" />
                   ) : (
-                    <span className="text-xs text-slate-500">無截圖</span>
+                    <span>無截圖</span>
                   )}
                 </div>
-                <div className="flex-1 min-w-0">
-                  <span className="text-xs font-semibold text-slate-400 uppercase tracking-wider block mb-0.5">
+                <div style={{ minWidth: 0, display: 'grid', gap: 2 }}>
+                  <span className="hint" style={{ margin: 0, color: 'var(--dim)', fontWeight: 600 }}>
                     目標圖案預覽
                   </span>
-                  <p className="text-xs font-bold text-white font-mono">
+                  <b className="num" style={{ fontSize: 'var(--fs2)', fontWeight: 600 }}>
                     {Math.round(selection.width)} × {Math.round(selection.height)} px
-                  </p>
-                  <p className="text-[11px] text-emerald-400 mt-1">
+                  </b>
+                  <span className="hint" style={{ margin: 0, color: 'var(--acc-txt)' }}>
                     ✓ 原始像素對應完成
-                  </p>
+                  </span>
                 </div>
               </div>
 
-              {/* If for Timer Icon, show simple dedicated timer icon confirmation */}
+              {/* 計時器圖示模式：這條路只是「確認並存成圖示」，沒有偵測參數可以調，
+                  所以整欄只有一張說明橫幅＋兩顆決定，用 my-auto 的意思讓它停在欄的中間。 */}
               {isForTimerIcon ? (
-                <div className="space-y-4 my-auto p-2">
-                  <div className="p-3 bg-emerald-950/40 border border-emerald-500/40 rounded-xl text-emerald-300 text-xs space-y-1">
-                    <p className="font-bold flex items-center gap-1.5 text-sm">
-                      <Sparkles className="w-4 h-4 text-emerald-400" />
-                      計時器專屬圖示
-                    </p>
-                    <p className="text-[11px] text-slate-300">
-                      ✓ 此截圖將直接作為懸浮窗與技能倒數專屬圖示，絕不加入或影響影像偵測清單。
+                <div
+                  style={{
+                    display: 'grid',
+                    gap: 'var(--sp3)',
+                    marginTop: 'auto',
+                    marginBottom: 'auto',
+                  }}
+                >
+                  <div className="banner ok">
+                    <Sparkles />
+                    <p>
+                      <b>計時器專屬圖示</b>
+                      <br />✓ 此截圖將直接作為懸浮窗與技能倒數專屬圖示，絕不加入或影響影像偵測清單。
                     </p>
                   </div>
 
-                  <div className="flex items-center gap-3 pt-4 border-t border-slate-800">
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="flex-1 py-2.5 px-4 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition-colors text-xs font-medium"
-                    >
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: 'var(--sp2)',
+                      paddingTop: 'var(--sp3)',
+                      borderTop: '1px solid var(--line)',
+                    }}
+                  >
+                    <button type="button" onClick={onClose} className="btn wide">
                       取消
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-xs font-bold shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Sparkles className="w-4 h-4" />
+                    <button type="button" onClick={handleSave} className="btn pri wide">
+                      <Sparkles />
                       儲存為計時器圖示
                     </button>
                   </div>
                 </div>
               ) : (
                 <>
-                  {/* Target Name */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      目標自訂名稱
-                    </label>
+                  <div className="fgroup">
+                    <label htmlFor="crop-name">目標自訂名稱</label>
                     <input
+                      id="crop-name"
                       type="text"
                       value={name}
                       onChange={(e) => setName(e.target.value)}
                       placeholder="例如：Boss 出現標記、任務完成按鈕"
-                      className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-emerald-500 font-medium"
+                      className="field lg"
                     />
                   </div>
 
-                  {/* Color Badge Picker */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      辨識框顏色 (HUD Color)
-                    </label>
-                    <div className="flex flex-wrap gap-2">
+                  {/* 顏色用 .dots：選中的那一顆靠 aria-pressed 畫白色外框（無障礙與外觀同一個來源），
+                      不要再用 inline borderColor 自己畫。 */}
+                  <div className="fgroup">
+                    <label>辨識框顏色 (HUD Color)</label>
+                    <div className="dots">
                       {COLOR_PALETTE.map((c) => (
                         <button
                           key={c}
                           type="button"
                           onClick={() => setColor(c)}
-                          className="w-7 h-7 rounded-full border-2 transition-transform hover:scale-110 flex items-center justify-center cursor-pointer"
-                          style={{
-                            backgroundColor: c,
-                            borderColor: color === c ? '#FFFFFF' : 'transparent',
-                          }}
+                          style={{ backgroundColor: c }}
+                          aria-pressed={color === c}
+                          aria-label={`辨識框顏色 ${c}`}
                         >
-                          {color === c && <Check className="w-3.5 h-3.5 text-white drop-shadow" />}
+                          {color === c && <Check />}
                         </button>
                       ))}
                     </div>
                   </div>
 
-                  {/* Similarity Slider */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="text-xs font-medium text-slate-300">
-                        相似度門檻 (Similarity Threshold)
-                      </label>
-                      <span className="text-xs font-bold text-emerald-400 font-mono">{threshold}%</span>
-                    </div>
+                  {/* 兩條滑桿的填色靠 inline --p（CSS 用它畫 track 的漸層），數字用 .num 固定欄寬，
+                      顏色跟填色同一個強調色，才看得出「這個數字就是那條的量」。 */}
+                  <div className="fgroup">
+                    <label htmlFor="crop-threshold" style={{ justifyContent: 'space-between' }}>
+                      <span>相似度門檻 (Similarity Threshold)</span>
+                      <b className="num" style={{ color: 'var(--acc-txt)' }}>
+                        {threshold}%
+                      </b>
+                    </label>
                     <input
+                      id="crop-threshold"
                       type="range"
                       min="50"
                       max="99"
                       value={threshold}
                       onChange={(e) => setThreshold(Number(e.target.value))}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                      style={
+                        { '--p': `${((threshold - 50) / 49) * 100}%` } as React.CSSProperties
+                      }
                     />
-                    <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                    <span className="hint" style={{ display: 'flex', justifyContent: 'space-between' }}>
                       <span>50% (寬鬆)</span>
                       <span>85% (建議)</span>
                       <span>99% (嚴格)</span>
-                    </div>
+                    </span>
                   </div>
 
-                  {/* Cooldown Seconds */}
-                  <div>
-                    <div className="flex justify-between items-center mb-1">
-                      <label className="text-xs font-medium text-slate-300">
-                        觸發冷卻時間 (Cooldown)
-                      </label>
-                      <span className="text-xs font-bold text-cyan-400 font-mono">{cooldown} 秒</span>
-                    </div>
+                  <div className="fgroup">
+                    <label htmlFor="crop-cooldown" style={{ justifyContent: 'space-between' }}>
+                      <span>觸發冷卻時間 (Cooldown)</span>
+                      <b className="num" style={{ color: 'var(--acc-txt)' }}>
+                        {cooldown} 秒
+                      </b>
+                    </label>
                     <input
+                      id="crop-cooldown"
                       type="range"
                       min="1"
                       max="30"
                       value={cooldown}
                       onChange={(e) => setCooldown(Number(e.target.value))}
-                      className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                      style={{ '--p': `${((cooldown - 1) / 29) * 100}%` } as React.CSSProperties}
                     />
                   </div>
 
-                  {/* Alert Sound Preset */}
-                  <div>
-                    <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                      偵測提示音效 (Alert Sound)
-                    </label>
-                    <div className="flex items-center gap-2">
+                  {/* 音效那一列：下拉是 30px 的 .field.lg，旁邊的試聽鈕就地拉成同高才不會參差。 */}
+                  <div className="fgroup">
+                    <label htmlFor="crop-sound">偵測提示音效 (Alert Sound)</label>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--sp2)' }}>
                       <select
+                        id="crop-sound"
                         value={soundType}
                         onChange={(e) => setSoundType(e.target.value as SoundType)}
-                        className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-emerald-500"
+                        className="field lg"
+                        style={{ flex: 1, minWidth: 0 }}
                       >
                         <option value="double_ding">🎯 雙音 (Double Ding)</option>
                         <option value="chime">🔔 清脆鈴聲 (Chime)</option>
@@ -1176,55 +1220,60 @@ export const CropModal: React.FC<CropModalProps> = ({
                       <button
                         type="button"
                         onClick={() => playAlertSound(soundType, 0.8)}
-                        className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-lg border border-slate-700 transition-colors flex items-center gap-1 text-xs font-medium"
+                        className="btn"
+                        style={{ height: 30, flex: 'none' }}
                         title="試聽音效"
                       >
-                        <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                        <Volume2 />
                         試聽
                       </button>
                     </div>
                   </div>
 
-                  {/* Extra Options */}
-                  <div className="space-y-2 pt-2 border-t border-slate-800">
-                    <label className="flex items-center gap-2.5 cursor-pointer text-xs text-slate-300">
+                  {/* 兩個開關放同一個 .fbox 裡。.ckl 預設 white-space:nowrap（那是給短標籤用的），
+                      ROI 這一句在 320px 的欄裡一定要能折行，所以就地放開並改成頂端對齊。 */}
+                  <div className="fbox">
+                    <label className="ckl">
                       <input
                         type="checkbox"
                         checked={speakName}
                         onChange={(e) => setSpeakName(e.target.checked)}
-                        className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-0"
                       />
                       <span>語音播報目標名稱 (語音朗讀)</span>
                     </label>
 
                     {!editingTarget && (
-                      <label className="flex items-center gap-2.5 cursor-pointer text-xs text-slate-300">
+                      <label
+                        className="ckl"
+                        style={{ whiteSpace: 'normal', alignItems: 'flex-start' }}
+                      >
                         <input
                           type="checkbox"
                           checked={autoSetRoi}
                           onChange={(e) => setAutoSetRoi(e.target.checked)}
-                          className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-emerald-600 focus:ring-0"
+                          style={{ marginTop: 1 }}
                         />
                         <span>自動將當前截圖周圍設為此目標的偵測區域 (ROI)</span>
                       </label>
                     )}
                   </div>
 
-                  {/* Bottom Actions */}
-                  <div className="flex items-center gap-3 mt-auto pt-4 border-t border-slate-800">
-                    <button
-                      type="button"
-                      onClick={onClose}
-                      className="flex-1 py-2.5 px-4 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition-colors text-xs font-medium"
-                    >
+                  {/* 決定放在欄底（marginTop:auto 把它推下去）。320px 的欄放不下兩顆並排的長字，
+                      所以用 .btn.wide 上下疊，主要決定在下面——跟其他視窗的頁尾同一個順序。 */}
+                  <div
+                    style={{
+                      display: 'grid',
+                      gap: 'var(--sp2)',
+                      marginTop: 'auto',
+                      paddingTop: 'var(--sp3)',
+                      borderTop: '1px solid var(--line)',
+                    }}
+                  >
+                    <button type="button" onClick={onClose} className="btn wide">
                       取消
                     </button>
-                    <button
-                      type="button"
-                      onClick={handleSave}
-                      className="flex-1 py-2.5 px-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-xs font-bold shadow-lg shadow-emerald-900/40 flex items-center justify-center gap-1.5 cursor-pointer"
-                    >
-                      <Sparkles className="w-4 h-4" />
+                    <button type="button" onClick={handleSave} className="btn pri wide">
+                      <Sparkles />
                       {editingTarget ? '更新目標設定' : '儲存目標'}
                     </button>
                   </div>

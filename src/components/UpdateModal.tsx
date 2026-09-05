@@ -1,3 +1,14 @@
+/**
+ * 軟體更新視窗。
+ *
+ * 六種狀態共用同一個外殼：正在檢查／檢查失敗／已是最新／有新版／正在下載／
+ * 已換好但要自己重開。每一種都用 components.css 的 .banner（圖示＋顏色，
+ * 不靠顏色單獨表意），版本說明用 .notes，下載進度用 .prog2。
+ *
+ * .scrim 預設就是 z-index 60，跟改版前寫死的 z-[60] 同一層：App.tsx 裡
+ * 「更新視窗是 z-60、登入是 z-100，所以登入還開著就先別彈更新」那個判斷
+ * 靠的就是這個數字，不要在這裡蓋掉它。
+ */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Download, X, RefreshCw, CheckCircle2, AlertTriangle, ExternalLink, FileText } from 'lucide-react';
 import type { ElectronAPI, UpdateInfo } from '../electron-api';
@@ -145,97 +156,144 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
       : null;
 
   return (
-    <div className="fixed inset-0 z-[60] bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-lg shadow-2xl overflow-hidden flex flex-col">
-        <div className="px-6 py-4 border-b border-slate-800 bg-slate-950 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <Download className="w-5 h-5 text-cyan-400" />
-            <h2 className="text-lg font-bold text-white">軟體更新</h2>
+    <div className="scrim">
+      <div
+        className="modal"
+        style={{ '--mw': '512px' } as React.CSSProperties}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="upd-title"
+      >
+        <header>
+          <div className="mtile">
+            <Download />
           </div>
-          {!isDownloading && !restarting && (
-            <button
-              onClick={onClose}
-              className="text-slate-400 hover:text-white transition-colors"
-              aria-label="關閉"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          )}
-        </div>
+          <div className="htxt">
+            <div className="ttl">
+              <h3 id="upd-title">軟體更新</h3>
+            </div>
+          </div>
 
-        <div className="p-6 space-y-4">
+          {/* 下載中／即將重開的時候不給關：關掉視窗並不會停下換檔，
+              但畫面消失會讓人以為沒事了，接著程式自己關掉。 */}
+          {!isDownloading && !restarting && (
+            <div className="hact">
+              <button
+                type="button"
+                className="btn ghost ico-only"
+                onClick={onClose}
+                title="關閉"
+                aria-label="關閉"
+              >
+                <X />
+              </button>
+            </div>
+          )}
+        </header>
+
+        {/* 內容高度隨狀態差很多（只有一條橫幅／整段版本說明＋三張提醒），
+            格線列不能被拉伸，所以 alignContent 要 start。 */}
+        <div className="body" style={{ alignContent: 'start' }}>
           {isChecking && (
-            <div className="flex items-center gap-3 text-slate-300">
-              <RefreshCw className="w-5 h-5 animate-spin text-cyan-400" />
-              正在檢查最新版本…
+            <div className="banner">
+              <RefreshCw className="animate-spin" />
+              <p>正在檢查最新版本…</p>
             </div>
           )}
 
           {!isChecking && info && !info.ok && (
-            <div className="space-y-3">
-              <div className="flex items-start gap-3 text-amber-300">
-                <AlertTriangle className="w-5 h-5 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-semibold">無法檢查更新</p>
-                  <p className="text-sm text-slate-400">{info.message}</p>
-                </div>
+            <div style={{ display: 'grid', gap: 'var(--sp2)' }}>
+              <div className="banner warn">
+                <AlertTriangle />
+                <p>
+                  <b>無法檢查更新</b>
+                  <br />
+                  {info.message}
+                </p>
               </div>
-              <p className="text-xs text-slate-500">目前版本 v{info.currentVersion || '?'}</p>
+              <p className="hint" style={{ margin: 0 }}>
+                目前版本 v{info.currentVersion || '?'}
+              </p>
             </div>
           )}
 
           {!isChecking && info?.ok && !info.hasUpdate && (
-            <div className="flex items-center gap-3">
-              <CheckCircle2 className="w-6 h-6 text-emerald-400 shrink-0" />
-              <div>
-                <p className="font-semibold text-white">已經是最新版本</p>
-                <p className="text-sm text-slate-400">
-                  目前版本 v{info.currentVersion}
-                  {info.latestVersion && info.latestVersion !== info.currentVersion
-                    ? `（線上最新 v${info.latestVersion}）`
-                    : ''}
-                </p>
-              </div>
+            <div className="banner ok">
+              <CheckCircle2 />
+              <p>
+                <b>已經是最新版本</b>
+                <br />
+                目前版本 v{info.currentVersion}
+                {info.latestVersion && info.latestVersion !== info.currentVersion
+                  ? `（線上最新 v${info.latestVersion}）`
+                  : ''}
+              </p>
             </div>
           )}
 
           {!isChecking && info?.ok && info.hasUpdate && (
-            <div className="space-y-4">
-              <div className="flex items-baseline gap-2">
-                <span className="text-slate-400 text-sm">v{info.currentVersion}</span>
-                <span className="text-slate-500">→</span>
-                <span className="text-xl font-bold text-cyan-300">v{info.latestVersion}</span>
+            <div style={{ display: 'grid', gap: 'var(--sp3)' }}>
+              {/* 版號跳躍：新版號是這一格的主角，用強調色與最大的字級；
+                  舊版號、箭頭、檔案大小都退到 dim。 */}
+              <div
+                style={{
+                  display: 'flex',
+                  alignItems: 'baseline',
+                  flexWrap: 'wrap',
+                  gap: 'var(--sp2)',
+                }}
+              >
+                <span style={{ fontSize: 'var(--fs1)', color: 'var(--dim)' }}>
+                  v{info.currentVersion}
+                </span>
+                <span style={{ fontSize: 'var(--fs1)', color: 'var(--dim2)' }}>→</span>
+                <span
+                  style={{
+                    fontSize: 'var(--fs4)',
+                    fontWeight: 600,
+                    letterSpacing: '-0.01em',
+                    color: 'var(--acc-txt)',
+                  }}
+                >
+                  v{info.latestVersion}
+                </span>
                 {info.downloadSize ? (
-                  <span className="text-xs text-slate-500">{formatSize(info.downloadSize)}</span>
+                  <span className="hint" style={{ margin: 0 }}>
+                    {formatSize(info.downloadSize)}
+                  </span>
                 ) : null}
               </div>
 
               {info.notes ? (
-                <div className="bg-slate-950 border border-slate-800 rounded-xl p-4 max-h-48 overflow-y-auto">
-                  <p className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-2">
+                <div style={{ display: 'grid', gap: '6px' }}>
+                  <span className="hint" style={{ margin: 0, color: 'var(--dim)', fontWeight: 600 }}>
                     更新內容
-                  </p>
-                  <pre className="text-sm text-slate-300 whitespace-pre-wrap font-sans">
-                    {info.notes}
-                  </pre>
+                  </span>
+                  {/* .notes 自己帶底色、外框、內距、190px 上限與 pre-wrap，而且明寫
+                      回代幣字體堆疊——那一條就是這裡原本掛著 font-sans 的根因修法。 */}
+                  <pre className="notes">{info.notes}</pre>
                 </div>
               ) : null}
 
               {info.staleRetry && (
-                <p className="text-sm text-amber-300">
-                  上一次已經下載並嘗試更新過這個版本，但重開之後版號沒有變。可能是那次換檔沒成功，
-                  也可能是發布時版號沒更新。更新紀錄檔裡會寫下上次停在哪一步；可以再試一次，或先到下載頁面確認。
-                </p>
+                <div className="banner warn">
+                  <AlertTriangle />
+                  <p>
+                    上一次已經下載並嘗試更新過這個版本，但重開之後版號沒有變。可能是那次換檔沒成功，
+                    也可能是發布時版號沒更新。更新紀錄檔裡會寫下上次停在哪一步；可以再試一次，或先到下載頁面確認。
+                  </p>
+                </div>
               )}
 
               {!info.canAutoUpdate && (
-                <p className="text-sm text-amber-300">
-                  這個資料夾沒有寫入權限或找不到可下載的執行檔，請改用下載頁面手動更新。
-                </p>
+                <div className="banner warn">
+                  <AlertTriangle />
+                  <p>這個資料夾沒有寫入權限或找不到可下載的執行檔，請改用下載頁面手動更新。</p>
+                </div>
               )}
 
               {info.canAutoUpdate && info.verifiable === false && (
-                <p className="text-xs text-slate-500">
+                <p className="hint" style={{ margin: 0 }}>
                   這個檔案沒有附雜湊值，下載後只能靠 HTTPS 保證來源，無法再比對內容。
                 </p>
               )}
@@ -243,14 +301,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
           )}
 
           {progress && (
-            <div className="space-y-2">
-              <div className="h-2 bg-slate-800 rounded-full overflow-hidden">
-                <div
-                  className="h-full bg-cyan-500 transition-all duration-200"
-                  style={{ width: `${percent ?? 0}%` }}
-                />
+            <div style={{ display: 'grid', gap: 'var(--sp2)' }}>
+              <div className="prog2">
+                <i style={{ width: `${percent ?? 0}%` }} />
               </div>
-              <p className="text-sm text-slate-400">
+              <p className="hint" style={{ margin: 0 }}>
                 {restarting
                   ? swapPending
                     ? '下載完成，即將關閉，接著由更新程式把新版換上去並開啟…'
@@ -263,35 +318,48 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
           )}
 
           {handoff && (
-            <div className="flex items-start gap-3 text-emerald-300 bg-emerald-950/40 border border-emerald-900 rounded-xl p-4">
-              <CheckCircle2 className="w-5 h-5 shrink-0 mt-0.5" />
-              <div className="space-y-1">
-                <p className="font-semibold">更新已經完成</p>
-                <p className="text-sm text-emerald-200/80">{handoff}</p>
-              </div>
+            <div className="banner ok">
+              <CheckCircle2 />
+              <p>
+                <b>更新已經完成</b>
+                <br />
+                {handoff}
+              </p>
             </div>
           )}
 
-          {error && <p className="text-sm text-rose-400">{error}</p>}
+          {error && (
+            <div className="banner bad">
+              <AlertTriangle />
+              <p>{error}</p>
+            </div>
+          )}
         </div>
 
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950 flex items-center justify-between gap-3">
-          <div className="flex items-center gap-2">
+        <footer>
+          {/* 左邊三個都是「去別的地方看」的輔助入口，用 .btn mini（23px、更輕），
+              才不會跟右邊真正的決定同一個重量。 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--sp1)',
+              marginRight: 'auto',
+            }}
+          >
             {info?.pageUrl && (
               <button
+                type="button"
+                className="btn mini"
                 onClick={() => void updateApi()?.openReleasePage?.(info.pageUrl)}
-                className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
               >
-                <ExternalLink className="w-3.5 h-3.5" />
+                <ExternalLink />
                 下載頁面
               </button>
             )}
             {!isChecking && !isDownloading && !restarting && (
-              <button
-                onClick={() => void check()}
-                className="text-xs text-slate-400 hover:text-white flex items-center gap-1 transition-colors"
-              >
-                <RefreshCw className="w-3.5 h-3.5" />
+              <button type="button" className="btn mini" onClick={() => void check()}>
+                <RefreshCw />
                 重新檢查
               </button>
             )}
@@ -300,52 +368,39 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
                 意思就是上一輪關掉之後的那一半沒有成功，而它唯一留下的證據就在那份紀錄裡。 */}
             {(error || handoff || info?.staleRetry) && updateApi()?.openUpdateLog && (
               <button
+                type="button"
+                className="btn mini"
                 onClick={() => void updateApi()?.openUpdateLog?.()}
-                className="text-xs text-slate-400 hover:text-cyan-300 flex items-center gap-1 transition-colors"
               >
-                <FileText className="w-3.5 h-3.5" />
+                <FileText />
                 更新紀錄
               </button>
             )}
           </div>
 
-          <div className="flex items-center gap-2">
-            {isDownloading ? (
-              <button
-                onClick={() => void cancel()}
-                className="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
-              >
-                取消下載
-              </button>
-            ) : restarting ? null : (
-              <>
-                {info?.ok && info.hasUpdate && !handoff && (
-                  <button
-                    onClick={skipThisVersion}
-                    className="px-3 py-2 rounded-lg text-sm text-slate-400 hover:text-white transition-colors"
-                  >
-                    跳過此版本
-                  </button>
-                )}
-                <button
-                  onClick={onClose}
-                  className="px-4 py-2 rounded-lg text-sm font-semibold bg-slate-800 text-slate-200 hover:bg-slate-700 transition-colors"
-                >
-                  {info?.ok && info.hasUpdate && !handoff ? '稍後再說' : '關閉'}
+          {isDownloading ? (
+            <button type="button" className="btn" onClick={() => void cancel()}>
+              取消下載
+            </button>
+          ) : restarting ? null : (
+            <>
+              {info?.ok && info.hasUpdate && !handoff && (
+                <button type="button" className="btn ghost" onClick={skipThisVersion}>
+                  跳過此版本
                 </button>
-                {info?.ok && info.hasUpdate && info.canAutoUpdate && !handoff && (
-                  <button
-                    onClick={() => void startDownload()}
-                    className="px-4 py-2 rounded-lg text-sm font-bold bg-cyan-600 text-white hover:bg-cyan-500 transition-colors flex items-center gap-2"
-                  >
-                    <Download className="w-4 h-4" />
-                    立即更新
-                  </button>
-                )}
-              </>
-            )}
-          </div>
-        </div>
+              )}
+              <button type="button" className="btn" onClick={onClose}>
+                {info?.ok && info.hasUpdate && !handoff ? '稍後再說' : '關閉'}
+              </button>
+              {info?.ok && info.hasUpdate && info.canAutoUpdate && !handoff && (
+                <button type="button" className="btn pri" onClick={() => void startDownload()}>
+                  <Download />
+                  立即更新
+                </button>
+              )}
+            </>
+          )}
+        </footer>
       </div>
     </div>
   );

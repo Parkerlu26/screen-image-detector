@@ -275,7 +275,7 @@ export const FloatingWindowView: React.FC = () => {
   };
 
   return (
-    <div className="w-screen h-screen bg-transparent select-none overflow-hidden font-sans">
+    <div className="w-screen h-screen bg-transparent select-none overflow-hidden">
       <FloatingTimerOverlay
         timers={timers}
         onTriggerTimer={handleTriggerTimer}

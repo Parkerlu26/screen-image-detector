@@ -9,14 +9,15 @@ import {
   Edit2,
   Copy,
   RotateCcw,
-  Crosshair,
-  CheckCircle2,
   Clock,
   Sliders,
   Mic,
   Camera,
   Pencil,
   Check,
+  Play,
+  Bell,
+  Monitor,
   ChevronDown,
   ChevronUp,
   GripVertical,
@@ -33,6 +34,10 @@ import {
  */
 const TARGET_MIME = 'application/x-june-target';
 const GROUP_MIME = 'application/x-june-group';
+
+/** 滑桿軌道的填色量。min/max 不是 0/100 的滑桿要先換算成百分比。 */
+const fillPercent = (value: number, min: number, max: number) =>
+  `${((value - min) / (max - min)) * 100}%`;
 
 interface TargetListProps {
   targets: Target[];
@@ -270,213 +275,203 @@ export const TargetList: React.FC<TargetListProps> = ({
     const isCoolingDown = timeSinceTrigger < target.cooldownSeconds;
     const cooldownRemaining = Math.max(0, Math.ceil(target.cooldownSeconds - timeSinceTrigger));
 
+    // 分數藥丸：命中＝綠、接近門檻＝琥珀、其餘＝灰。沒開或沒串流時不給假數字。
+    const isLive = target.enabled && isStreamActive;
+    const scoreTone = !isLive
+      ? ''
+      : currentScore >= thresholdPercent
+      ? ' on'
+      : currentScore >= thresholdPercent * 0.7
+      ? ' near'
+      : '';
+    const volumePercent = Math.round((target.volume ?? 0.8) * 100);
+    const speechPercent = Math.round((target.speechVolume ?? 1) * 100);
+
     return (
-      <div
+      <article
         key={target.id}
         onDragOver={(e) => onCardDragOver(e, target)}
         onDrop={(e) => onCardDrop(e, target)}
-        className={`relative rounded-xl border transition-all duration-200 overflow-hidden ${
-          isDragging ? 'opacity-40' : ''
-        } ${hintBefore ? 'border-t-2 border-t-emerald-400' : ''} ${
-          hintAfter ? 'border-b-2 border-b-emerald-400' : ''
-        } ${
-          target.enabled
-            ? isHit
-              ? 'bg-slate-900 border-emerald-500 shadow-lg shadow-emerald-950/40 ring-1 ring-emerald-500/50'
-              : 'bg-slate-900/90 border-slate-700/80 hover:border-slate-600'
-            : 'bg-slate-950/60 border-slate-800/80 opacity-60'
-        }`}
+        className={`card${isHit ? ' hit' : ''}${target.enabled ? '' : ' off'}${
+          isDragging ? ' dragging' : ''
+        }${hintBefore ? ' insert' : ''}`}
+        /* .insert 只畫上緣那條線；落在下緣時同一條線要移到底部，所以走 inline。 */
+        style={hintAfter ? { boxShadow: '0 2px 0 0 var(--acc-txt)' } : undefined}
       >
-        <div className="h-1 w-full" style={{ backgroundColor: target.enabled ? target.color : '#475569' }} />
+        <div className="top">
+          {/* 只有把手可拖，卡片裡的滑桿與輸入框才不會被拖曳搶走 */}
+          <span
+            draggable
+            onDragStart={(e) => {
+              e.dataTransfer.setData(TARGET_MIME, target.id);
+              e.dataTransfer.effectAllowed = 'move';
+              setDragTargetId(target.id);
+            }}
+            onDragEnd={clearDragState}
+            className="grip"
+            title="拖曳可調整順序，或拖到其他子目錄"
+          >
+            <GripVertical />
+          </span>
 
-        <div className="p-3 space-y-2.5">
-          <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-1.5 min-w-0">
-              {/* Only the handle is draggable, so the sliders and inputs inside the
-                  card keep working normally. */}
-              <div
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(TARGET_MIME, target.id);
-                  e.dataTransfer.effectAllowed = 'move';
-                  setDragTargetId(target.id);
-                }}
-                onDragEnd={clearDragState}
-                className="shrink-0 -ml-1.5 py-2 text-slate-500 hover:text-emerald-400 cursor-grab active:cursor-grabbing"
-                title="拖曳可調整順序，或拖到其他子目錄"
-              >
-                <GripVertical className="w-3 h-3" />
-              </div>
+          {/* 縮圖。左邊那條 3px 是目標色，滑到卡片上才浮出「重新截圖」 */}
+          <div className="pic" style={{ '--tc': target.color } as React.CSSProperties}>
+            <i className="swb" />
+            <img src={target.imageDataUrl} alt={target.name} />
+            <button
+              type="button"
+              onClick={() => onEditTarget(target)}
+              className="ov"
+              aria-label="重新截圖/編輯區域"
+              title="重新截圖/編輯區域"
+            >
+              <Edit2 />
+            </button>
+          </div>
 
-              {/* Thumbnail (hover to re-crop) */}
-              <div
-                className="relative w-11 h-11 rounded-lg bg-slate-950 border-2 flex items-center justify-center p-0.5 shrink-0 group overflow-hidden"
-                style={{ borderColor: target.color }}
-              >
-                <img
-                  src={target.imageDataUrl}
-                  alt={target.name}
-                  className="max-w-full max-h-full object-contain"
-                />
-                <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+          <div className="meta">
+            <div className="name">
+              {isEditingThisName ? (
+                <>
+                  <input
+                    type="text"
+                    value={tempName}
+                    onChange={(e) => setTempName(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') handleSaveRename(target);
+                      if (e.key === 'Escape') setEditingNameId(null);
+                    }}
+                    onBlur={() => handleSaveRename(target)}
+                    className="rename"
+                    style={{ width: 130 }}
+                    aria-label="目標名稱"
+                    autoFocus
+                  />
                   <button
                     type="button"
-                    onClick={() => onEditTarget(target)}
-                    className="p-1 rounded text-white hover:text-emerald-400"
-                    title="重新截圖/編輯區域"
+                    onClick={() => handleSaveRename(target)}
+                    className="btn mini ico-only"
+                    style={{ color: 'var(--acc-txt)' }}
+                    aria-label="完成改名"
+                    title="完成改名"
                   >
-                    <Edit2 className="w-3 h-3" />
+                    <Check />
                   </button>
-                </div>
-              </div>
-
-              <div className="min-w-0">
-                <div className="flex items-center gap-1.5">
-                  <span
-                    className="w-2 h-2 rounded-full shrink-0"
-                    style={{ backgroundColor: target.color }}
-                  />
-                  {isEditingThisName ? (
-                    <div className="flex items-center gap-1">
-                      <input
-                        type="text"
-                        value={tempName}
-                        onChange={(e) => setTempName(e.target.value)}
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveRename(target);
-                          if (e.key === 'Escape') setEditingNameId(null);
-                        }}
-                        onBlur={() => handleSaveRename(target)}
-                        className="bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-xs text-white font-bold w-[110px] focus:outline-none"
-                        autoFocus
-                      />
-                      <button
-                        type="button"
-                        onClick={() => handleSaveRename(target)}
-                        className="p-0.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded cursor-pointer"
-                      >
-                        <Check className="w-3 h-3" />
-                      </button>
-                    </div>
-                  ) : (
-                    <div className="flex items-center gap-1 group/name">
-                      <h3
-                        onClick={() => handleStartRename(target)}
-                        className="text-xs font-bold text-white truncate max-w-[120px] cursor-pointer hover:text-emerald-400 hover:underline transition-colors"
-                        title="點擊直接修改名稱"
-                      >
-                        {target.name}
-                      </h3>
-                      <button
-                        type="button"
-                        onClick={() => handleStartRename(target)}
-                        className="opacity-0 group-hover/name:opacity-100 p-0.5 text-slate-400 hover:text-white transition-opacity cursor-pointer"
-                        title="點擊修改名稱"
-                      >
-                        <Pencil className="w-2.5 h-2.5" />
-                      </button>
-                    </div>
-                  )}
-                </div>
-
-                <div className="flex items-center gap-1.5 mt-0.5 text-[10px] text-slate-400">
-                  <span>
-                    {target.imageWidth}×{target.imageHeight}
-                  </span>
-                  <span>•</span>
-                  {hasRoi ? (
-                    <span className="text-cyan-400 font-semibold flex items-center gap-0.5">
-                      <Crosshair className="w-2.5 h-2.5" />
-                      指定區域
-                    </span>
-                  ) : (
-                    <span className="text-slate-500">全螢幕</span>
-                  )}
-                  <span>•</span>
-                  <span className="text-emerald-400 font-mono font-bold">門檻 {thresholdPercent}%</span>
-                </div>
-              </div>
+                </>
+              ) : (
+                <>
+                  <b onClick={() => handleStartRename(target)} title="點擊直接修改名稱" style={{ cursor: 'pointer' }}>
+                    {target.name}
+                  </b>
+                  <button
+                    type="button"
+                    onClick={() => handleStartRename(target)}
+                    className="btn mini ico-only hoveronly"
+                    aria-label="修改名稱"
+                    title="點擊修改名稱"
+                  >
+                    <Pencil />
+                  </button>
+                  <span className={`score num${scoreTone}`}>{isLive ? `${currentScore}%` : '—'}</span>
+                  {!target.enabled && <span className="tag">已停用</span>}
+                </>
+              )}
             </div>
 
-            <div className="flex items-center gap-1 shrink-0">
-              <button
-                type="button"
-                onClick={() => handleToggleEnabled(target)}
-                className={`px-2 py-1 rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
-                  target.enabled
-                    ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                    : 'bg-slate-800 text-slate-400 border border-slate-700'
-                }`}
-              >
-                <CheckCircle2
-                  className={`w-3 h-3 ${target.enabled ? 'text-emerald-400' : 'text-slate-500'}`}
-                />
-                {target.enabled ? '啟用' : '停用'}
-              </button>
-              <button
-                type="button"
-                onClick={() => toggleExpand(target.id)}
-                className={`flex items-center gap-0.5 px-2 py-1 rounded-lg text-[11px] font-medium border transition-colors cursor-pointer ${
-                  isExpanded
-                    ? 'bg-indigo-600/30 border-indigo-500/50 text-indigo-200'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border-slate-700'
-                }`}
-                title={isExpanded ? '收合詳細設定' : '展開調整相似度門檻、冷卻時間與區域'}
-              >
-                <span>參數</span>
-                {isExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-              </button>
-              <button
-                type="button"
-                onClick={() => onDuplicateTarget(target)}
-                className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                title="複製目標"
-              >
-                <Copy className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onEditTarget(target)}
-                className="p-1 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                title="重新截圖/編輯區域"
-              >
-                <Edit2 className="w-3.5 h-3.5" />
-              </button>
-              <button
-                type="button"
-                onClick={() => onDeleteTarget(target.id)}
-                className="p-1 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
-                title="刪除目標"
-              >
-                <Trash2 className="w-3.5 h-3.5" />
-              </button>
+            <div className="sub">
+              <span>
+                {target.imageWidth}×{target.imageHeight}
+              </span>
+              <span className="s" />
+              <span>{hasRoi ? '指定區域' : '全螢幕'}</span>
+              <span className="d1">
+                <span className="s" />
+                <span className="num">門檻 {thresholdPercent}%</span>
+              </span>
             </div>
           </div>
 
-          {isExpanded && (
-            <div className="pt-2 border-t border-slate-800/80 space-y-2.5">
-              {/* Threshold + live score */}
-              <div className="space-y-1 bg-slate-950/70 p-2 rounded-lg border border-slate-800/90">
-                <div className="flex items-center justify-between text-[11px]">
-                  <span className="text-slate-300 font-medium flex items-center gap-1">
-                    <Sliders className="w-3 h-3 text-slate-400" />
-                    相似度門檻:{' '}
-                    <strong className="text-emerald-400 font-mono">{thresholdPercent}%</strong>
+          <div className="acts">
+            <button
+              type="button"
+              onClick={() => onDuplicateTarget(target)}
+              className="btn mini ico-only hoveronly"
+              aria-label="複製目標"
+              title="複製目標"
+            >
+              <Copy />
+            </button>
+            <button
+              type="button"
+              onClick={() => onEditTarget(target)}
+              className="btn mini ico-only hoveronly"
+              aria-label="重新截圖/編輯區域"
+              title="重新截圖/編輯區域"
+            >
+              <Edit2 />
+            </button>
+            <button
+              type="button"
+              onClick={() => onDeleteTarget(target.id)}
+              className="btn mini ico-only hoveronly"
+              style={{ color: 'var(--bad)' }}
+              aria-label="刪除目標"
+              title="刪除目標"
+            >
+              <Trash2 />
+            </button>
+            <button
+              type="button"
+              onClick={() => toggleExpand(target.id)}
+              className="btn mini ico-only"
+              style={isExpanded ? { color: 'var(--acc-txt)' } : undefined}
+              aria-expanded={isExpanded}
+              aria-label={isExpanded ? '收合詳細設定' : '展開詳細設定'}
+              title={isExpanded ? '收合詳細設定' : '展開調整相似度門檻、冷卻時間與區域'}
+            >
+              {isExpanded ? <ChevronUp /> : <ChevronDown />}
+            </button>
+            {/* 啟用開關：旋鈕位置本身就是狀態，不需要再寫「啟用／停用」四個字 */}
+            <button
+              type="button"
+              role="switch"
+              aria-checked={target.enabled}
+              onClick={() => handleToggleEnabled(target)}
+              className="sw"
+              aria-label="啟用此目標"
+              title={target.enabled ? '已啟用（點擊停用）' : '已停用（點擊啟用）'}
+            >
+              <i />
+            </button>
+          </div>
+        </div>
+
+        {isExpanded && (
+          <div className="expand">
+            <div className="list">
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <Sliders />
+                    相似度門檻
                   </span>
-                  <div className="flex items-center gap-1">
-                    <span className="text-slate-400 text-[10px]">即時:</span>
-                    <span
-                      className={`text-[11px] font-bold px-1.5 py-0.5 rounded ${
-                        currentScore >= thresholdPercent
-                          ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40'
-                          : currentScore >= thresholdPercent * 0.7
-                          ? 'bg-amber-500/10 text-amber-300'
-                          : 'bg-slate-800 text-slate-400'
-                      }`}
+                  <span className="val num">
+                    <b>{thresholdPercent}%</b>
+                    <span className="s" />
+                    即時{' '}
+                    <b
+                      style={{
+                        color:
+                          scoreTone === ' on'
+                            ? 'var(--ok)'
+                            : scoreTone === ' near'
+                            ? 'var(--warn)'
+                            : undefined,
+                      }}
                     >
-                      {target.enabled && isStreamActive ? `${currentScore}%` : '--'}
-                    </span>
-                  </div>
+                      {isLive ? `${currentScore}%` : '--'}
+                    </b>
+                  </span>
                 </div>
                 <input
                   type="range"
@@ -484,159 +479,174 @@ export const TargetList: React.FC<TargetListProps> = ({
                   max="99"
                   value={thresholdPercent}
                   onChange={(e) => handleThresholdChange(target, Number(e.target.value))}
-                  className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
+                  style={{ '--p': fillPercent(thresholdPercent, 50, 99) } as React.CSSProperties}
+                  aria-label="相似度門檻"
                 />
               </div>
 
-              {/* Cooldown + ROI */}
-              <div className="grid grid-cols-2 gap-2">
-                <div className="flex items-center justify-between bg-slate-950/60 px-2.5 py-1.5 rounded-lg border border-slate-800 text-[11px]">
-                  <span className="text-slate-400 flex items-center gap-1">
-                    <Clock className="w-3 h-3 text-cyan-400" />
-                    冷卻:
+              <div className="row">
+                <span className="lab">
+                  <Clock />
+                  冷卻
+                </span>
+                <input
+                  type="number"
+                  min="1"
+                  max="60"
+                  value={target.cooldownSeconds}
+                  onChange={(e) => handleCooldownChange(target, Math.max(1, Number(e.target.value)))}
+                  className="field num"
+                  style={{ width: 52 }}
+                  aria-label="冷卻秒數"
+                />
+                <span className="val">秒</span>
+                {isCoolingDown && (
+                  <span className="tag ok" title="冷卻中，剩餘秒數">
+                    {cooldownRemaining}s
                   </span>
-                  <div className="flex items-center gap-1">
-                    <input
-                      type="number"
-                      min="1"
-                      max="60"
-                      value={target.cooldownSeconds}
-                      onChange={(e) => handleCooldownChange(target, Math.max(1, Number(e.target.value)))}
-                      className="w-10 bg-slate-900 border border-slate-700 rounded px-1 text-center text-white font-bold text-[11px]"
-                    />
-                    <span className="text-slate-400">秒</span>
-                    {isCoolingDown && (
-                      <span className="px-1 rounded bg-cyan-500/20 text-cyan-300 font-bold animate-pulse text-[9px]">
-                        {cooldownRemaining}s
-                      </span>
-                    )}
-                  </div>
-                </div>
-
-                <div className="flex items-center justify-between bg-slate-950/60 px-2.5 py-1.5 rounded-lg border border-slate-800 text-[11px]">
-                  <span className="text-slate-400 flex items-center gap-1">
-                    <Crosshair className="w-3 h-3 text-indigo-400" />
-                    區域:
-                  </span>
-                  <div className="flex items-center gap-1">
-                    <button
-                      type="button"
-                      onClick={() => onOpenRoiModal(target)}
-                      disabled={!isStreamActive}
-                      className="px-1.5 py-0.5 rounded bg-indigo-600/30 hover:bg-indigo-600/50 text-indigo-200 border border-indigo-500/30 text-[10px] font-semibold transition-colors disabled:opacity-50 cursor-pointer"
-                    >
-                      {hasRoi ? '重設' : '框選'}
-                    </button>
-                    {hasRoi && (
-                      <button
-                        type="button"
-                        onClick={() => handleClearRoi(target)}
-                        className="p-1 rounded text-slate-400 hover:text-white hover:bg-slate-800 transition-colors cursor-pointer"
-                        title="清除自訂區域 (改為全畫面)"
-                      >
-                        <RotateCcw className="w-2.5 h-2.5" />
-                      </button>
-                    )}
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Sound + speech toggle */}
-              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/50 text-[11px]">
-                <div className="flex items-center gap-1 flex-1">
-                  <select
-                    value={target.soundType}
-                    onChange={(e) => handleSoundChange(target, e.target.value as SoundType)}
-                    className="bg-slate-950 border border-slate-800 rounded-md px-1.5 py-0.5 text-[11px] text-slate-300 focus:outline-none focus:border-emerald-500 flex-1 cursor-pointer"
-                  >
-                    <option value="double_ding">🎯 雙音</option>
-                    <option value="chime">🔔 鈴聲</option>
-                    <option value="beep">🚨 嗶聲</option>
-                    <option value="siren">⚠️ 警報</option>
-                    <option value="coin">🪙 金幣</option>
-                    <option value="scifi">⚡ 科技</option>
-                    <option value="fanfare">🎺 號角</option>
-                  </select>
+              <div className="row">
+                <span className="lab">
+                  <Monitor />
+                  區域
+                </span>
+                <button
+                  type="button"
+                  onClick={() => onOpenRoiModal(target)}
+                  disabled={!isStreamActive}
+                  className="btn mini"
+                  title={isStreamActive ? '在畫面上框選只偵測的區域' : '要先開始擷取畫面才能框選區域'}
+                >
+                  {hasRoi ? '重設' : '框選'}
+                </button>
+                {hasRoi && (
                   <button
                     type="button"
-                    onClick={() => playAlertSound(target.soundType, (target.volume ?? 0.8) * masterVolume)}
-                    className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-                    title="試聽音效"
+                    onClick={() => handleClearRoi(target)}
+                    className="btn mini ico-only"
+                    aria-label="清除自訂區域（改為全畫面）"
+                    title="清除自訂區域 (改為全畫面)"
                   >
-                    <Volume2 className="w-3 h-3 text-emerald-400" />
+                    <RotateCcw />
+                  </button>
+                )}
+              </div>
+
+              <div className="row">
+                <span className="lab">
+                  <Bell />
+                  提示音
+                </span>
+                <select
+                  value={target.soundType}
+                  onChange={(e) => handleSoundChange(target, e.target.value as SoundType)}
+                  className="field"
+                  style={{ width: 104 }}
+                  aria-label="提示音"
+                >
+                  <option value="double_ding">🎯 雙音</option>
+                  <option value="chime">🔔 鈴聲</option>
+                  <option value="beep">🚨 嗶聲</option>
+                  <option value="siren">⚠️ 警報</option>
+                  <option value="coin">🪙 金幣</option>
+                  <option value="scifi">⚡ 科技</option>
+                  <option value="fanfare">🎺 號角</option>
+                </select>
+                <button
+                  type="button"
+                  onClick={() => playAlertSound(target.soundType, (target.volume ?? 0.8) * masterVolume)}
+                  className="btn mini"
+                  title="試聽音效"
+                >
+                  <Play />
+                  試聽
+                </button>
+              </div>
+
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <Mic />
+                    語音朗讀
+                  </span>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={!!target.speakName}
+                    onClick={() => handleSpeechToggle(target)}
+                    className="sw sm"
+                    aria-label="語音朗讀"
+                    title="偵測到時朗讀目標名稱"
+                  >
+                    <i />
                   </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={() => handleSpeechToggle(target)}
-                  className={`flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors border cursor-pointer ${
-                    target.speakName
-                      ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                      : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300'
-                  }`}
-                  title="偵測到時朗讀目標名稱"
-                >
-                  <Mic className="w-2.5 h-2.5" />
-                  語音朗讀
-                </button>
-              </div>
-
-              {/* Per-target alert volume */}
-              <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-950/60 rounded-lg border border-slate-800 text-[10px]">
-                <Volume2 className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-400">提示音量:</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round((target.volume ?? 0.8) * 100)}
-                  onChange={(e) => onUpdateTarget({ ...target, volume: Number(e.target.value) / 100 })}
-                  className="flex-1 h-1 bg-slate-800 rounded accent-emerald-500 cursor-pointer"
-                />
-                <span className="font-mono text-emerald-400 w-7 text-right font-bold">
-                  {Math.round((target.volume ?? 0.8) * 100)}%
-                </span>
-              </div>
-
-              {/* Per-target speech volume */}
-              <div
-                className={`flex items-center gap-1.5 px-2 py-1 bg-slate-950/60 rounded-lg border border-slate-800 text-[10px] ${
-                  target.speakName ? '' : 'opacity-50'
-                }`}
-              >
-                <Mic className="w-3 h-3 text-slate-400" />
-                <span className="text-slate-400">語音音量:</span>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={Math.round((target.speechVolume ?? 1) * 100)}
-                  onChange={(e) =>
-                    onUpdateTarget({ ...target, speechVolume: Number(e.target.value) / 100 })
-                  }
-                  className="flex-1 h-1 bg-slate-800 rounded accent-amber-500 cursor-pointer"
-                  title={
-                    target.speakName
-                      ? '這個目標朗讀名稱時的音量'
-                      : '先開啟「語音朗讀」才會用到這個音量'
-                  }
-                />
-                <span className="font-mono text-amber-400 w-7 text-right font-bold">
-                  {Math.round((target.speechVolume ?? 1) * 100)}%
-                </span>
-                <button
-                  type="button"
-                  onClick={() => speakAlert(`偵測到 ${target.name}`, target.speechVolume ?? 1)}
-                  className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-                  title="試聽語音"
-                >
-                  <Mic className="w-3 h-3 text-amber-400" />
-                </button>
+                <div className="grid2" style={{ alignItems: 'center' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 7 }}>
+                    <Volume2 style={{ width: 13, height: 13, color: 'var(--dim2)', flex: 'none' }} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={volumePercent}
+                      onChange={(e) =>
+                        onUpdateTarget({ ...target, volume: Number(e.target.value) / 100 })
+                      }
+                      style={{ '--p': `${volumePercent}%` } as React.CSSProperties}
+                      aria-label="提示音量"
+                      title="這個目標的提示音量"
+                    />
+                    <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+                      {volumePercent}%
+                    </span>
+                  </div>
+                  {/* 語音音量：沒開朗讀時整組淡化，但不停用——他可能想先調好再開 */}
+                  <div
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: 7,
+                      opacity: target.speakName ? 1 : 0.5,
+                    }}
+                  >
+                    <Mic style={{ width: 13, height: 13, color: 'var(--dim2)', flex: 'none' }} />
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={speechPercent}
+                      onChange={(e) =>
+                        onUpdateTarget({ ...target, speechVolume: Number(e.target.value) / 100 })
+                      }
+                      style={{ '--p': `${speechPercent}%` } as React.CSSProperties}
+                      aria-label="語音音量"
+                      title={
+                        target.speakName
+                          ? '這個目標朗讀名稱時的音量'
+                          : '先開啟「語音朗讀」才會用到這個音量'
+                      }
+                    />
+                    <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+                      {speechPercent}%
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => speakAlert(`偵測到 ${target.name}`, target.speechVolume ?? 1)}
+                      className="btn mini ico-only"
+                      aria-label="試聽語音"
+                      title="試聽語音"
+                    >
+                      <Mic />
+                    </button>
+                  </div>
+                </div>
               </div>
             </div>
-          )}
-        </div>
-      </div>
+          </div>
+        )}
+      </article>
     );
   };
 
@@ -659,16 +669,12 @@ export const TargetList: React.FC<TargetListProps> = ({
         key={group ? group.id : '__ungrouped__'}
         onDragOver={(e) => onGroupDragOver(e, key)}
         onDrop={(e) => onGroupDrop(e, key)}
-        className={`rounded-xl border transition-colors ${
-          isDropping
-            ? 'border-emerald-500/70 bg-emerald-950/20'
-            : 'border-slate-800/70 bg-slate-950/30'
-        }`}
+        className="tgroup"
+        style={isDropping ? { borderColor: 'var(--acc)' } : undefined}
       >
-        {/* Header */}
-        <div className="flex items-center gap-1.5 px-1.5 py-1.5">
+        <div className="ghead">
           {group ? (
-            <div
+            <span
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData(GROUP_MIME, group.id);
@@ -676,76 +682,85 @@ export const TargetList: React.FC<TargetListProps> = ({
                 setDragGroupId(group.id);
               }}
               onDragEnd={clearDragState}
-              className="shrink-0 text-slate-500 hover:text-emerald-400 cursor-grab active:cursor-grabbing"
+              className="grip"
               title="拖曳可調整子目錄順序"
             >
-              <GripVertical className="w-3 h-3" />
-            </div>
+              <GripVertical />
+            </span>
           ) : (
-            <span className="w-3 shrink-0" />
+            /* 未分類沒有把手，但要留同寬的位置，兩個群組列的字才對得齊 */
+            <span style={{ width: 14, flex: 'none' }} />
           )}
 
           <button
             type="button"
             onClick={() => group && toggleGroupCollapsed(group)}
             disabled={!group}
-            className="shrink-0 text-slate-400 hover:text-white transition-colors cursor-pointer disabled:cursor-default"
+            className="btn mini ico-only"
+            style={{ color: 'var(--warn)' }}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? '展開子目錄' : '收合子目錄'}
             title={collapsed ? '展開子目錄' : '收合子目錄'}
           >
-            {group && collapsed ? (
-              <Folder className="w-3.5 h-3.5 text-amber-400" />
-            ) : (
-              <FolderOpen className="w-3.5 h-3.5 text-amber-400" />
-            )}
+            {group && collapsed ? <Folder /> : <FolderOpen />}
           </button>
-          {isRenaming ? (
-            <input
-              type="text"
-              value={tempGroupName}
-              onChange={(e) => setTempGroupName(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') handleSaveGroupRename(group!);
-                if (e.key === 'Escape') setEditingGroupId(null);
-              }}
-              onBlur={() => handleSaveGroupRename(group!)}
-              className="bg-slate-950 border border-emerald-500 rounded px-1.5 py-0.5 text-[11px] text-white font-bold w-[120px] focus:outline-none"
-              autoFocus
-            />
-          ) : (
-            <span
-              onClick={() => {
-                if (!group) return;
-                setEditingGroupId(group.id);
-                setTempGroupName(group.name);
-              }}
-              className={`text-[11px] font-bold truncate ${
-                group ? 'text-white cursor-pointer hover:text-emerald-400' : 'text-slate-400'
-              }`}
-              title={group ? '點擊修改子目錄名稱' : '不屬於任何子目錄的目標'}
-            >
-              {group ? group.name : '未分類'}
+
+          <span className="gname">
+            {isRenaming ? (
+              <>
+                <input
+                  type="text"
+                  value={tempGroupName}
+                  onChange={(e) => setTempGroupName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveGroupRename(group!);
+                    if (e.key === 'Escape') setEditingGroupId(null);
+                  }}
+                  onBlur={() => handleSaveGroupRename(group!)}
+                  className="rename"
+                  aria-label="子目錄名稱"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveGroupRename(group!)}
+                  className="btn mini ico-only"
+                  style={{ color: 'var(--acc-txt)' }}
+                  aria-label="完成改名"
+                  title="完成改名"
+                >
+                  <Check />
+                </button>
+              </>
+            ) : (
+              <b
+                onClick={() => {
+                  if (!group) return;
+                  setEditingGroupId(group.id);
+                  setTempGroupName(group.name);
+                }}
+                style={group ? { cursor: 'pointer' } : { color: 'var(--dim)' }}
+                title={group ? '點擊修改子目錄名稱' : '不屬於任何子目錄的目標'}
+              >
+                {group ? group.name : '未分類'}
+              </b>
+            )}
+            <span className="count" title="啟用數／總數">
+              {enabledCount}/{items.length}
             </span>
-          )}
-
-          <span className="px-1.5 rounded-full text-[9px] font-bold bg-slate-800 text-emerald-400 border border-slate-700 shrink-0">
-            {enabledCount}/{items.length}
           </span>
-
-          <div className="flex-1" />
 
           {group && (
             <>
               <button
                 type="button"
                 onClick={() => setBulkGroupId(isBulkOpen ? null : group.id)}
-                className={`flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold border transition-colors cursor-pointer ${
-                  isBulkOpen
-                    ? 'bg-indigo-600/30 text-indigo-200 border-indigo-500/50'
-                    : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-                }`}
+                className="btn mini"
+                aria-pressed={!!isBulkOpen}
+                style={isBulkOpen ? { color: 'var(--acc-txt)' } : undefined}
                 title="一次編輯這個子目錄裡的所有目標"
               >
-                <Layers className="w-2.5 h-2.5" />
+                <Layers />
                 批次
               </button>
               <button
@@ -761,91 +776,80 @@ export const TargetList: React.FC<TargetListProps> = ({
                     onDeleteGroup(group.id);
                   }
                 }}
-                className="p-0.5 text-slate-500 hover:text-rose-400 transition-colors cursor-pointer"
+                className="btn mini ico-only hoveronly"
+                style={{ color: 'var(--bad)' }}
+                aria-label="刪除子目錄"
                 title="刪除子目錄（目標會移到未分類）"
               >
-                <Trash2 className="w-3 h-3" />
+                <Trash2 />
               </button>
             </>
           )}
         </div>
 
-        {/* Bulk edit panel */}
-        {group && isBulkOpen && (
-          <GroupBulkEditPanel
-            items={items}
-            onBulkUpdateTargets={onBulkUpdateTargets}
-            onDeleteTargets={(ids) => {
-              setBulkGroupId(null);
-              onDeleteTargets(ids);
-            }}
-            masterVolume={masterVolume}
-          />
-        )}
+        {/* 收合時卡片收起來，但批次面板還是要看得到（他可能只是想少看幾張卡） */}
+        {(!collapsed || isBulkOpen) && (
+          <div className="gbody">
+            {!collapsed &&
+              (items.length === 0 ? (
+                <div className={`dropzone${isDropping ? ' on' : ''}`}>把目標卡片拖到這裡</div>
+              ) : (
+                items.map((t) => renderCard(t))
+              ))}
 
-        {/* Cards */}
-        {!collapsed && (
-          <div className="px-1.5 pb-1.5 space-y-2">
-            {items.length === 0 ? (
-              <div className="rounded-lg border border-dashed border-slate-700 py-2 text-center text-[10px] text-slate-500">
-                把目標卡片拖到這裡
-              </div>
-            ) : (
-              items.map((t) => renderCard(t))
+            {group && isBulkOpen && (
+              <GroupBulkEditPanel
+                items={items}
+                onBulkUpdateTargets={onBulkUpdateTargets}
+                onDeleteTargets={(ids) => {
+                  setBulkGroupId(null);
+                  onDeleteTargets(ids);
+                }}
+                masterVolume={masterVolume}
+              />
             )}
           </div>
         )}
       </div>
     );
   };
+
   const hasGroups = groups.length > 0;
 
   return (
-    <div className="flex flex-col h-full w-full bg-slate-900 border border-slate-800 rounded-2xl overflow-hidden shadow-xl min-h-0">
-      {/* Fixed header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-slate-800 bg-slate-950/80 shrink-0">
-        <div className="flex items-center gap-2 min-w-0">
-          <div className="w-7 h-7 rounded-lg bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center shrink-0">
-            <TargetIcon className="w-4 h-4 text-emerald-400" />
-          </div>
-          <h2 className="text-xs font-bold text-white flex items-center gap-1.5">
-            偵測目標清單
-            <span className="px-1.5 rounded-full text-[10px] font-bold bg-slate-800 text-emerald-400 border border-slate-700">
-              {targets.length}
-            </span>
-          </h2>
-        </div>
+    <section className="panel targets">
+      <header>
+        <h3>偵測目標清單</h3>
+        <span className="count">{targets.length}</span>
+        <div style={{ flex: 1 }} />
+        <button
+          type="button"
+          onClick={onAddGroup}
+          className="btn mini"
+          title="新增一個子目錄，之後把卡片拖進去"
+        >
+          <FolderPlus />
+          子目錄
+        </button>
+        <button
+          type="button"
+          onClick={onOpenNewCrop}
+          className="btn pri"
+          style={{ height: 24, padding: '0 8px', fontSize: 'var(--fs0)' }}
+          title="從畫面截圖新增偵測目標"
+        >
+          <Camera style={{ width: 13, height: 13 }} />
+          截圖新增
+        </button>
+      </header>
 
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={onAddGroup}
-            className="flex items-center gap-1 px-2 py-1.5 rounded-xl text-[11px] font-bold bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 transition-colors cursor-pointer"
-            title="新增一個子目錄，之後把卡片拖進去"
-          >
-            <FolderPlus className="w-3.5 h-3.5 text-amber-400" />
-            子目錄
-          </button>
-          <button
-            type="button"
-            onClick={onOpenNewCrop}
-            className="flex items-center gap-1 px-3 py-1.5 rounded-xl text-xs font-bold bg-emerald-600 hover:bg-emerald-500 text-white shadow-lg shadow-emerald-950/40 transition-colors cursor-pointer"
-            title="從畫面截圖新增偵測目標"
-          >
-            <Camera className="w-3.5 h-3.5" />
-            截圖新增
-          </button>
-        </div>
-      </div>
-      {/* Scrolling body — this is what makes the number of targets unlimited. */}
-      <div className="flex-1 p-3 space-y-2.5 overflow-y-auto min-h-0">
+      {/* 捲動區——目標數量不設上限就是靠這裡 */}
+      <div className="body">
         {targets.length === 0 && !hasGroups ? (
-          <div className="h-full flex flex-col items-center justify-center text-center gap-2 py-8">
-            <div className="w-12 h-12 rounded-2xl bg-slate-800/60 border border-slate-700 flex items-center justify-center">
-              <TargetIcon className="w-6 h-6 text-slate-500" />
-            </div>
-            <p className="text-xs text-slate-400 font-semibold">還沒有偵測目標</p>
-            <p className="text-[11px] text-slate-500 leading-relaxed max-w-[220px]">
+          <div className="empty">
+            <TargetIcon />
+            <p style={{ color: 'var(--dim)', fontWeight: 600 }}>還沒有偵測目標</p>
+            <p style={{ maxWidth: 220, lineHeight: 1.65 }}>
               先在上方選擇要監看的畫面，然後按「截圖新增」框選要偵測的圖片。
             </p>
           </div>
@@ -858,6 +862,6 @@ export const TargetList: React.FC<TargetListProps> = ({
           targets.map((t) => renderCard(t))
         )}
       </div>
-    </div>
+    </section>
   );
 };

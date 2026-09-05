@@ -2,6 +2,7 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Target, TargetGroup, MatchResult, MatchLogEntry, GlobalSettings, AppConfig, UserAccount, ImageComboRule, CooldownTimer, Rect } from './types';
 import type { MouseAction } from './electron-api';
 import { Navbar } from './components/Navbar';
+import { TitleBar } from './components/TitleBar';
 import { LiveStreamViewer } from './components/LiveStreamViewer';
 import { TargetList } from './components/TargetList';
 import { LogHistory } from './components/LogHistory';
@@ -19,6 +20,7 @@ import {
 } from './components/UpdateModal';
 import { AutomationAndTimers } from './components/AutomationAndTimers';
 import { FloatingTimerOverlay } from './components/FloatingTimerOverlay';
+import { AlertTriangle } from 'lucide-react';
 import {
   loadConfigFromStorage,
   saveConfigToStorage,
@@ -31,6 +33,7 @@ import {
   clearTemplateCache,
 } from './utils/imageMatching';
 import { playAlertSound, speakAlert, triggerBrowserNotification } from './utils/audio';
+import { applyAppearance } from './utils/appearance';
 import { normalizeHotkeyName } from './utils/hotkeys';
 import {
   loadCachedSession,
@@ -69,6 +72,14 @@ export default function App() {
   const targets = config.targets;
   const groups = config.groups || [];
   const settings = config.settings;
+
+  /**
+   * 外觀（顏色／深淺）掛到 <html>。開機那一次已經由 main.tsx 在第一次畫之前做完了，
+   * 這個 effect 負責的是之後的變化：在設定裡改，或是匯入了別人的設定檔。
+   */
+  useEffect(() => {
+    applyAppearance(settings.accent, settings.theme);
+  }, [settings.accent, settings.theme]);
 
   // Automation Rules & Cooldown Timers State
   const [rules, setRules] = useState<ImageComboRule[]>(() => {
@@ -1583,7 +1594,10 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen w-screen flex flex-col bg-slate-950 text-slate-100 font-sans select-none overflow-hidden min-h-0">
+    <div className="app-shell h-screen w-screen flex flex-col select-none overflow-hidden min-h-0">
+      {/* 視窗標題列（名字置中；縮小／放大／關閉由 Windows 畫在同一列右邊） */}
+      <TitleBar />
+
       {/* Visual Screen Flash on Hit */}
       {screenFlash && (
         <div
@@ -1617,70 +1631,61 @@ export default function App() {
 
       {/* 離線寬限提示：連不上帳號伺服器時讓使用者知道還剩幾天 */}
       {currentUser && sessionNotice && (
-        <div className="px-3 lg:px-4 pt-2">
-          <div className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-            ⚠️ {sessionNotice}
-          </div>
+        <div className="notice">
+          <AlertTriangle />
+          {sessionNotice}
         </div>
       )}
-      {/* ── TAB 1: 🎯 即時圖像辨識與清單 (Kept mounted to preserve 60FPS video stream!) ── */}
-      <main className={`flex-1 w-full p-3 lg:p-4 flex flex-col lg:flex-row gap-3 lg:gap-4 overflow-hidden min-h-0 ${
-        activeTab === 'detect' ? '' : 'hidden'
-      }`}>
-        {/* Left Column: Direct Hardware Video Stream & Canvas HUD */}
-        <section className="flex-1 h-full min-h-0 flex flex-col min-w-0">
-          <LiveStreamViewer
-            videoRef={videoRef}
-            isStreamActive={isStreamActive}
-            isPaused={isPaused}
-            onTogglePause={() => setIsPaused(!isPaused)}
-            onStartCapture={handleStartCapture}
-            onStopCapture={handleStopCapture}
-            onOpenCropModal={() => handleOpenCropModal(null)}
+      {/* ── TAB 1: 🎯 即時圖像辨識與清單 (Kept mounted to preserve 60FPS video stream!) ──
+           收起來要用 .hide 不能用 Tailwind 的 hidden：components.css 是無層 CSS，
+           `.main{display:grid}` 贏過工具層的 `.hidden{display:none}`，用 hidden 會關不掉。 */}
+      <main className={`main ${activeTab === 'detect' ? '' : 'hide'}`}>
+        {/* 左：直接吃硬體影像的 <video> ＋ 疊在上面的 canvas HUD */}
+        <LiveStreamViewer
+          videoRef={videoRef}
+          isStreamActive={isStreamActive}
+          isPaused={isPaused}
+          onTogglePause={() => setIsPaused(!isPaused)}
+          onStartCapture={handleStartCapture}
+          onStopCapture={handleStopCapture}
+          onOpenCropModal={() => handleOpenCropModal(null)}
+          targets={targets}
+          latestMatches={latestMatches}
+          settings={settings}
+          fps={fps}
+          latencyMs={latencyMs}
+          gpuActive={gpuActive}
+          sourceWidth={sourceWidth}
+          sourceHeight={sourceHeight}
+        />
+
+        {/* 右：目標卡與紀錄。高度分配走 .side（targets 撐滿、logs 固定 210px） */}
+        <div className="side">
+          <TargetList
             targets={targets}
-            latestMatches={latestMatches}
-            settings={settings}
-            fps={fps}
-            latencyMs={latencyMs}
-            gpuActive={gpuActive}
-            sourceWidth={sourceWidth}
-            sourceHeight={sourceHeight}
+            groups={groups}
+            onUpdateTarget={handleUpdateTarget}
+            onDeleteTarget={handleDeleteTarget}
+            onDuplicateTarget={handleDuplicateTarget}
+            onReorderTargets={handleReorderTargets}
+            onUpdateGroups={handleUpdateGroups}
+            onAddGroup={handleAddGroup}
+            onDeleteGroup={handleDeleteGroup}
+            onBulkUpdateTargets={handleBulkUpdateTargets}
+            onDeleteTargets={handleDeleteTargets}
+            onOpenRoiModal={handleOpenRoiModal}
+            onEditTarget={(target) => handleOpenCropModal(target)}
+            onOpenNewCrop={() => handleOpenCropModal(null)}
+            isStreamActive={isStreamActive}
+            masterVolume={settings.masterVolume}
           />
-        </section>
 
-        {/* Right Column: Multi-Target Cards & Logs */}
-        <section className="w-full lg:w-[460px] xl:w-[500px] flex flex-col h-full min-h-0 gap-3 shrink-0">
-          {/* Target List */}
-          <div className="flex-1 min-h-0 flex flex-col">
-            <TargetList
-              targets={targets}
-              groups={groups}
-              onUpdateTarget={handleUpdateTarget}
-              onDeleteTarget={handleDeleteTarget}
-              onDuplicateTarget={handleDuplicateTarget}
-              onReorderTargets={handleReorderTargets}
-              onUpdateGroups={handleUpdateGroups}
-              onAddGroup={handleAddGroup}
-              onDeleteGroup={handleDeleteGroup}
-              onBulkUpdateTargets={handleBulkUpdateTargets}
-              onDeleteTargets={handleDeleteTargets}
-              onOpenRoiModal={handleOpenRoiModal}
-              onEditTarget={(target) => handleOpenCropModal(target)}
-              onOpenNewCrop={() => handleOpenCropModal(null)}
-              isStreamActive={isStreamActive}
-              masterVolume={settings.masterVolume}
-            />
-          </div>
-
-          {/* Real-time Match Logs */}
-          <div className="h-[210px] shrink-0 flex flex-col">
-            <LogHistory
-              logs={logs}
-              onClearLogs={() => setLogs([])}
-              masterVolume={settings.masterVolume}
-            />
-          </div>
-        </section>
+          <LogHistory
+            logs={logs}
+            onClearLogs={() => setLogs([])}
+            masterVolume={settings.masterVolume}
+          />
+        </div>
       </main>
 
       {/* ── TAB 2: ⚡ 進階條件聯動 ＆ 按鍵倒數計時器 ── */}

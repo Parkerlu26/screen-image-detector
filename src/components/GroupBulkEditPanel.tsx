@@ -8,9 +8,10 @@ import {
   Clock,
   Sliders,
   Mic,
-  Crosshair,
-  CheckCircle2,
-  XCircle,
+  Bell,
+  Monitor,
+  Check,
+  X,
   Layers,
 } from 'lucide-react';
 
@@ -21,6 +22,10 @@ interface GroupBulkEditPanelProps {
   onDeleteTargets: (targetIds: string[]) => void;
   masterVolume: number;
 }
+
+/** 滑桿軌道的填色量。min/max 不是 0/100 的滑桿要先換算成百分比。 */
+const fillPercent = (value: number, min: number, max: number) =>
+  `${((value - min) / (max - min)) * 100}%`;
 
 /**
  * 批次編輯 panel for one 子目錄.
@@ -55,117 +60,119 @@ export const GroupBulkEditPanel: React.FC<GroupBulkEditPanelProps> = ({
   const commonSpeechVolume = common((t) => Math.round((t.speechVolume ?? 1) * 100));
   const roiCount = items.filter((t) => !!t.normalizedRoi).length;
 
-  const mixed = (
-    <span className="text-[9px] px-1 rounded bg-amber-500/20 text-amber-300 border border-amber-500/30 font-semibold">
-      混合
-    </span>
-  );
+  const mixed = <span className="tag warn">混合</span>;
 
   if (items.length === 0) {
     return (
-      <div className="px-2.5 py-2 text-[11px] text-slate-500 bg-slate-950/70 border-t border-slate-800">
+      <div className="bulk" style={{ fontSize: 'var(--fs1)', color: 'var(--dim2)' }}>
         這個子目錄還沒有目標，先把卡片拖進來就能一次設定。
       </div>
     );
   }
 
   return (
-    <div className="p-2.5 space-y-2 bg-slate-950/80 border-t border-slate-800">
-      <div className="flex items-center gap-1.5 text-[11px] text-indigo-200 font-bold">
-        <Layers className="w-3 h-3" />
-        批次設定：一次套用到這個子目錄的 {items.length} 個目標
-      </div>
+    <div className="bulk">
+      <header>
+        <Layers style={{ width: 14, height: 14, color: 'var(--acc-txt)' }} />
+        <b>批次設定：一次套用到這個子目錄的 {items.length} 個目標</b>
+      </header>
 
-      {/* Enable / disable everything */}
-      <div className="flex items-center gap-1.5">
+      <div style={{ display: 'flex', gap: 'var(--sp2)' }}>
         <button
           type="button"
           onClick={() => apply({ enabled: true })}
-          className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-emerald-600/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-600/30 transition-colors cursor-pointer"
+          className="btn mini"
+          style={{ flex: 1, justifyContent: 'center', color: 'var(--ok)' }}
         >
-          <CheckCircle2 className="w-3 h-3" />
+          <Check />
           全部啟用
         </button>
         <button
           type="button"
           onClick={() => apply({ enabled: false })}
-          className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-slate-800 text-slate-300 border border-slate-700 hover:bg-slate-700 transition-colors cursor-pointer"
+          className="btn mini"
+          style={{ flex: 1, justifyContent: 'center' }}
         >
-          <XCircle className="w-3 h-3" />
+          <X />
           全部停用
         </button>
       </div>
 
-      {/* Threshold */}
-      <div className="space-y-1 bg-slate-900/70 p-2 rounded-lg border border-slate-800">
-        <div className="flex items-center justify-between text-[11px]">
-          <span className="text-slate-300 font-medium flex items-center gap-1">
-            <Sliders className="w-3 h-3 text-slate-400" />
-            相似度門檻
-          </span>
-          {commonThreshold === null ? (
-            mixed
-          ) : (
-            <strong className="text-emerald-400 font-mono">{commonThreshold}%</strong>
-          )}
-        </div>
-        <input
-          type="range"
-          min="50"
-          max="99"
-          value={commonThreshold ?? 80}
-          onChange={(e) => apply({ threshold: Number(e.target.value) / 100 })}
-          className="w-full h-1.5 bg-slate-800 rounded-lg appearance-none cursor-pointer accent-emerald-500"
-        />
-      </div>
-
-      <div className="grid grid-cols-2 gap-2">
-        {/* Cooldown */}
-        <div className="flex items-center justify-between bg-slate-900/70 px-2.5 py-1.5 rounded-lg border border-slate-800 text-[11px]">
-          <span className="text-slate-400 flex items-center gap-1">
-            <Clock className="w-3 h-3 text-cyan-400" />
-            冷卻:
-          </span>
-          <div className="flex items-center gap-1">
-            <input
-              type="number"
-              min="1"
-              max="60"
-              value={commonCooldown ?? ''}
-              placeholder="—"
-              onChange={(e) => apply({ cooldownSeconds: Math.max(1, Number(e.target.value)) })}
-              className="w-11 bg-slate-950 border border-slate-700 rounded px-1 py-0.5 text-center text-white font-bold text-[11px]"
-            />
-            <span className="text-slate-400">秒</span>
+      <div className="list">
+        <div className="row stack">
+          <div className="head">
+            <span className="lab">
+              <Sliders />
+              相似度門檻
+            </span>
+            {commonThreshold === null ? (
+              mixed
+            ) : (
+              <span className="val num">
+                <b>{commonThreshold}%</b>
+              </span>
+            )}
           </div>
+          <input
+            type="range"
+            min="50"
+            max="99"
+            value={commonThreshold ?? 80}
+            onChange={(e) => apply({ threshold: Number(e.target.value) / 100 })}
+            style={{ '--p': fillPercent(commonThreshold ?? 80, 50, 99) } as React.CSSProperties}
+            aria-label="批次相似度門檻"
+          />
         </div>
 
-        {/* ROI clearing (bulk framing needs the live frame, so only clearing is offered) */}
-        <div className="flex items-center justify-between bg-slate-900/70 px-2.5 py-1.5 rounded-lg border border-slate-800 text-[11px]">
-          <span className="text-slate-400 flex items-center gap-1">
-            <Crosshair className="w-3 h-3 text-indigo-400" />
-            區域: {roiCount}/{items.length}
+        <div className="row">
+          <span className="lab">
+            <Clock />
+            冷卻
+          </span>
+          {commonCooldown === null && mixed}
+          <input
+            type="number"
+            min="1"
+            max="60"
+            value={commonCooldown ?? ''}
+            placeholder="—"
+            onChange={(e) => apply({ cooldownSeconds: Math.max(1, Number(e.target.value)) })}
+            className="field num"
+            style={{ width: 46 }}
+            aria-label="批次冷卻秒數"
+          />
+          <span className="val">秒</span>
+        </div>
+
+        {/* 批次框選需要當下的影格，所以這裡只提供「全部改回全畫面」 */}
+        <div className="row">
+          <span className="lab">
+            <Monitor />
+            區域 {roiCount}/{items.length}
           </span>
           <button
             type="button"
             onClick={() => apply({ normalizedRoi: null })}
             disabled={roiCount === 0}
-            className="flex items-center gap-0.5 px-1.5 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 text-[10px] font-semibold transition-colors disabled:opacity-40 cursor-pointer"
+            className="btn mini"
             title="把這個子目錄的目標全部改回全畫面偵測"
           >
-            <RotateCcw className="w-2.5 h-2.5" />
+            <RotateCcw />
             全改全螢幕
           </button>
         </div>
-      </div>
 
-      {/* Sound + speech toggle */}
-      <div className="flex items-center gap-2 text-[11px]">
-        <div className="flex items-center gap-1 flex-1">
+        <div className="row">
+          <span className="lab">
+            <Bell />
+            提示音
+          </span>
           <select
             value={commonSound ?? ''}
             onChange={(e) => apply({ soundType: e.target.value as SoundType })}
-            className="bg-slate-950 border border-slate-800 rounded-md px-1.5 py-0.5 text-[11px] text-slate-300 focus:outline-none focus:border-emerald-500 flex-1 cursor-pointer"
+            className="field"
+            style={{ width: 96 }}
+            aria-label="批次提示音"
           >
             {commonSound === null && <option value="">（混合音效）</option>}
             <option value="double_ding">🎯 雙音</option>
@@ -181,91 +188,92 @@ export const GroupBulkEditPanel: React.FC<GroupBulkEditPanelProps> = ({
             onClick={() =>
               playAlertSound(commonSound ?? 'chime', ((commonVolume ?? 80) / 100) * masterVolume)
             }
-            className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
+            className="btn mini ico-only"
+            aria-label="試聽音效"
             title="試聽音效"
           >
-            <Volume2 className="w-3 h-3 text-emerald-400" />
+            <Volume2 />
           </button>
-        </div>
-
-        <div className="flex items-center gap-1">
           <button
             type="button"
             onClick={() => apply({ speakName: true })}
-            className={`px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
-              commonSpeech === true
-                ? 'bg-amber-500/20 text-amber-300 border-amber-500/40'
-                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300'
-            }`}
+            aria-pressed={commonSpeech === true}
+            className="btn mini"
+            style={commonSpeech === true ? { color: 'var(--warn)' } : undefined}
             title="全部開啟語音朗讀"
           >
-            <Mic className="w-2.5 h-2.5 inline mr-0.5" />
+            <Mic />
             朗讀開
           </button>
           <button
             type="button"
             onClick={() => apply({ speakName: false })}
-            className={`px-2 py-0.5 rounded-md text-[10px] font-medium border transition-colors cursor-pointer ${
-              commonSpeech === false
-                ? 'bg-slate-700 text-slate-200 border-slate-600'
-                : 'bg-slate-950 text-slate-400 border-slate-800 hover:text-slate-300'
-            }`}
+            aria-pressed={commonSpeech === false}
+            className="btn mini"
             title="全部關閉語音朗讀"
           >
             朗讀關
           </button>
         </div>
-      </div>
-
-      {/* Alert volume */}
-      <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-900/70 rounded-lg border border-slate-800 text-[10px]">
-        <Volume2 className="w-3 h-3 text-slate-400" />
-        <span className="text-slate-400">提示音量:</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={commonVolume ?? 80}
-          onChange={(e) => apply({ volume: Number(e.target.value) / 100 })}
-          className="flex-1 h-1 bg-slate-800 rounded accent-emerald-500 cursor-pointer"
-        />
-        {commonVolume === null ? (
-          mixed
-        ) : (
-          <span className="font-mono text-emerald-400 w-7 text-right font-bold">{commonVolume}%</span>
-        )}
-      </div>
-
-      {/* Speech volume */}
-      <div className="flex items-center gap-1.5 px-2 py-1 bg-slate-900/70 rounded-lg border border-slate-800 text-[10px]">
-        <Mic className="w-3 h-3 text-slate-400" />
-        <span className="text-slate-400">語音音量:</span>
-        <input
-          type="range"
-          min="0"
-          max="100"
-          value={commonSpeechVolume ?? 100}
-          onChange={(e) => apply({ speechVolume: Number(e.target.value) / 100 })}
-          className="flex-1 h-1 bg-slate-800 rounded accent-amber-500 cursor-pointer"
-        />
-        {commonSpeechVolume === null ? (
-          mixed
-        ) : (
-          <span className="font-mono text-amber-400 w-7 text-right font-bold">
-            {commonSpeechVolume}%
+        <div className="row">
+          <span className="lab">
+            <Volume2 />
+            提示音量
           </span>
-        )}
-        <button
-          type="button"
-          onClick={() => speakAlert('批次語音測試', (commonSpeechVolume ?? 100) / 100)}
-          className="p-1 rounded-md bg-slate-800 hover:bg-slate-700 text-slate-300 transition-colors cursor-pointer"
-          title="試聽語音"
-        >
-          <Mic className="w-3 h-3 text-amber-400" />
-        </button>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={commonVolume ?? 80}
+            onChange={(e) => apply({ volume: Number(e.target.value) / 100 })}
+            style={{ '--p': fillPercent(commonVolume ?? 80, 0, 100) } as React.CSSProperties}
+            aria-label="批次提示音量"
+          />
+          {commonVolume === null ? (
+            mixed
+          ) : (
+            <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+              {commonVolume}%
+            </span>
+          )}
+        </div>
+
+        <div className="row">
+          <span className="lab">
+            <Mic />
+            語音音量
+          </span>
+          <input
+            type="range"
+            min="0"
+            max="100"
+            value={commonSpeechVolume ?? 100}
+            onChange={(e) => apply({ speechVolume: Number(e.target.value) / 100 })}
+            style={
+              { '--p': fillPercent(commonSpeechVolume ?? 100, 0, 100) } as React.CSSProperties
+            }
+            aria-label="批次語音音量"
+          />
+          {commonSpeechVolume === null ? (
+            mixed
+          ) : (
+            <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+              {commonSpeechVolume}%
+            </span>
+          )}
+          <button
+            type="button"
+            onClick={() => speakAlert('批次語音測試', (commonSpeechVolume ?? 100) / 100)}
+            className="btn mini ico-only"
+            aria-label="試聽語音"
+            title="試聽語音"
+          >
+            <Mic />
+          </button>
+        </div>
       </div>
 
-      {/* Destructive: delete every target in the group */}
+      {/* 破壞性操作放最後，跟上面的設定隔開，顏色也講清楚 */}
       <button
         type="button"
         onClick={() => {
@@ -273,9 +281,10 @@ export const GroupBulkEditPanel: React.FC<GroupBulkEditPanelProps> = ({
             onDeleteTargets(ids);
           }
         }}
-        className="w-full flex items-center justify-center gap-1 px-2 py-1 rounded-lg text-[11px] font-semibold bg-rose-950/40 text-rose-300 border border-rose-900/60 hover:bg-rose-900/40 transition-colors cursor-pointer"
+        className="btn mini"
+        style={{ justifyContent: 'center', color: 'var(--bad)' }}
       >
-        <Trash2 className="w-3 h-3" />
+        <Trash2 />
         刪除子目錄內所有目標
       </button>
     </div>

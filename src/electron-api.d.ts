@@ -113,6 +113,17 @@ export interface DownloadProgress {
   total: number;
 }
 
+/**
+ * Windows 標題列上那三顆原生按鈕的配色。深淺主題一換就要重送一次，
+ * 因為那三顆是作業系統畫的，CSS 碰不到它們。顏色來源是 `src/utils/appearance.ts`。
+ */
+export interface TitleBarOverlayOptions {
+  /** 按鈕區的底色，要跟 tokens.css 的 --bg 一致。 */
+  color: string;
+  /** 三個符號的顏色，要跟 --dim 一致。 */
+  symbolColor: string;
+}
+
 export interface ElectronAPI {
   getDesktopSources: () => Promise<DesktopSource[]>;
   /**
@@ -131,6 +142,11 @@ export interface ElectronAPI {
   openFloatingWindow: () => Promise<boolean>;
   closeFloatingWindow: () => Promise<boolean>;
   resizeFloatingWindow: (params: { width: number; height: number }) => Promise<boolean>;
+  /**
+   * 換掉「送出這個請求的那個視窗」的原生按鈕配色。回 false＝這個視窗沒有原生標題列
+   * （浮動視窗、浮動計時器都是無邊框的），呼叫端不必分辨，照送就好。
+   */
+  setTitleBarOverlay: (options: TitleBarOverlayOptions) => Promise<boolean>;
   /** 這個是 `ipcRenderer.send`，不是 invoke，所以沒有回傳值也等不到對方收到。 */
   syncTimersData: (data: TimersSyncPayload) => void;
   /** 回傳值是取消訂閱用的，元件收掉的時候一定要呼叫。 */

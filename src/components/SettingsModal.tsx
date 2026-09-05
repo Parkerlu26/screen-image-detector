@@ -1,7 +1,25 @@
 import React from 'react';
 import { GlobalSettings } from '../types';
-import { Settings, X, Bell, Eye, Zap, Volume2, Sparkles, Mic, Download } from 'lucide-react';
+import {
+  Activity,
+  AlertTriangle,
+  Bell,
+  CheckCircle2,
+  Crosshair,
+  Download,
+  Eye,
+  Mic,
+  Monitor,
+  SlidersHorizontal,
+  Sparkles,
+  Target,
+  Volume2,
+  X,
+  XCircle,
+  Zap,
+} from 'lucide-react';
 import { speakAlert } from '../utils/audio';
+import { ACCENT_OPTIONS, THEME_OPTIONS } from '../utils/appearance';
 
 interface SettingsModalProps {
   isOpen: boolean;
@@ -13,6 +31,18 @@ interface SettingsModalProps {
   /** 打開「軟體更新」對話框。開機時也會自動檢查一次，這裡是手動的入口。 */
   onCheckForUpdate?: () => void;
 }
+
+/** 桌面通知授權狀態 → 藥丸的顏色與文字。'unsupported' 也要有自己一格，
+    否則不支援通知的環境會顯示「未設定」，旁邊還配一顆按了不會有反應的授權鈕。 */
+const PERMISSION_TAG: Record<
+  NotificationPermission | 'unsupported',
+  { cls: string; text: string; icon: React.ReactNode }
+> = {
+  granted: { cls: 'tag ok', text: '已授權', icon: <CheckCircle2 /> },
+  denied: { cls: 'tag bad', text: '已拒絕', icon: <XCircle /> },
+  default: { cls: 'tag warn', text: '未設定', icon: <AlertTriangle /> },
+  unsupported: { cls: 'tag bad', text: '不支援', icon: <XCircle /> },
+};
 
 export const SettingsModal: React.FC<SettingsModalProps> = ({
   isOpen,
@@ -32,59 +62,114 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
     });
   };
 
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-xl shadow-2xl overflow-hidden flex flex-col">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-slate-800 border border-slate-700 flex items-center justify-center text-slate-300">
-              <Settings className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white">全域設定 (Global Settings)</h2>
-              <p className="text-xs text-slate-400">自訂辨識效能、提示反饋與畫面覆蓋層顯示</p>
-            </div>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+  // 語音音量沒設定過時視為 100%：滑桿的位置、讀數與試聽用的音量必須吃同一個值，
+  // 不能一邊 ?? 1.0 一邊讀原始的 undefined。
+  const speechVolume = settings.speechVolume ?? 1.0;
+  const perm = PERMISSION_TAG[notificationPermission] ?? PERMISSION_TAG.default;
 
-        {/* Form Body */}
-        <div className="p-6 space-y-5">
-          {/* Section 1: Performance & FPS */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400" />
+  return (
+    <div className="scrim">
+      <div className="modal" role="dialog" aria-modal="true" aria-labelledby="settings-title">
+        <header>
+          <div className="htxt">
+            <h3 id="settings-title">全域設定</h3>
+            <p>自訂外觀、辨識效能、提示反饋與畫面覆蓋層顯示</p>
+          </div>
+          <div className="hact">
+            <button
+              type="button"
+              className="btn ghost ico-only"
+              onClick={onClose}
+              aria-label="關閉設定"
+              title="關閉設定"
+            >
+              <X />
+            </button>
+          </div>
+        </header>
+
+        <div className="body">
+          {/* 外觀：唯一被點名要能在 app 裡隨時改的外觀設定。
+              其餘四項（圓角、密度、材質、圖示）已經定案寫死在 src/styles/tokens.css，
+              不做成選項——選項越多越容易被調成不好看的組合。 */}
+          <div>
+            <h4 className="sect" style={{ marginBottom: 6 }}>
+              <Monitor />
+              外觀
+            </h4>
+            <div className="list">
+              <div className="row">
+                <span className="lab">
+                  <Monitor />
+                  主題深淺
+                </span>
+                <div style={{ flex: 1 }} />
+                <div className="opts" role="group" aria-label="主題深淺">
+                  {THEME_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={settings.theme === option.id}
+                      onClick={() => handleChange('theme', option.id)}
+                    >
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="row">
+                <span className="lab">
+                  <Sparkles />
+                  顏色
+                </span>
+                <div style={{ flex: 1 }} />
+                <div className="opts" role="group" aria-label="顏色">
+                  {ACCENT_OPTIONS.map((option) => (
+                    <button
+                      key={option.id}
+                      type="button"
+                      aria-pressed={settings.accent === option.id}
+                      onClick={() => handleChange('accent', option.id)}
+                    >
+                      <i className="swatch" style={{ background: option.swatch }} />
+                      {option.label}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            </div>
+            <p className="hint">改了立刻生效，會記在設定檔裡，下次開啟沿用。</p>
+          </div>
+
+          {/* 辨識效能與掃描頻率 */}
+          <div>
+            <h4 className="sect" style={{ marginBottom: 6 }}>
+              <Zap />
               辨識效能與掃描頻率
-            </h3>
-            
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-medium text-slate-300">
-                    偵測掃描頻率 (Scan FPS): <strong className="text-amber-400 font-mono text-sm">{settings.scanFps >= 60 ? '60 FPS (極致高刷)' : `${settings.scanFps} FPS`}</strong>
-                  </label>
-                  <div className="flex items-center gap-1">
-                    {[15, 30, 60].map((fpsVal) => (
-                      <button
-                        key={fpsVal}
-                        type="button"
-                        onClick={() => handleChange('scanFps', fpsVal)}
-                        className={`px-2 py-0.5 rounded text-[10px] font-bold transition-colors ${
-                          settings.scanFps === fpsVal
-                            ? 'bg-amber-500 text-slate-950 shadow-sm'
-                            : 'bg-slate-900 text-slate-400 hover:text-white border border-slate-700'
-                        }`}
-                      >
-                        {fpsVal} FPS
-                      </button>
-                    ))}
-                  </div>
+            </h4>
+            <div className="list">
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <Activity />
+                    偵測掃描頻率
+                  </span>
+                  <span className="val num">
+                    <b>{settings.scanFps >= 60 ? '60 FPS (極致高刷)' : `${settings.scanFps} FPS`}</b>
+                  </span>
+                </div>
+                <div className="opts" style={{ justifyContent: 'flex-end' }}>
+                  {[15, 30, 60].map((fpsVal) => (
+                    <button
+                      key={fpsVal}
+                      type="button"
+                      aria-pressed={settings.scanFps === fpsVal}
+                      onClick={() => handleChange('scanFps', fpsVal)}
+                    >
+                      {fpsVal} FPS
+                    </button>
+                  ))}
                 </div>
                 <input
                   type="range"
@@ -93,94 +178,144 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   step="5"
                   value={settings.scanFps}
                   onChange={(e) => handleChange('scanFps', Number(e.target.value))}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  aria-label="偵測掃描頻率"
+                  style={{ '--p': `${((settings.scanFps - 5) / 55) * 100}%` } as React.CSSProperties}
                 />
-                <div className="flex justify-between text-[10px] text-slate-400 mt-1">
+                <div
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    gap: 6,
+                    fontSize: 10,
+                    color: 'var(--dim2)',
+                  }}
+                >
                   <span>5 FPS (省電)</span>
                   <span>30 FPS (流暢)</span>
-                  <span>60 FPS (極致電競 & 毫秒級低延遲)</span>
+                  <span>60 FPS (極致電競 &amp; 毫秒級低延遲)</span>
                 </div>
               </div>
 
-              <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">
-                  比對演算法模式
-                </label>
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <SlidersHorizontal />
+                    比對演算法模式
+                  </span>
+                </div>
                 <select
+                  className="field"
                   value={settings.matchAlgorithm}
-                  onChange={(e) => handleChange('matchAlgorithm', e.target.value as 'ncc' | 'fast_color')}
-                  className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-amber-500"
+                  onChange={(e) =>
+                    handleChange('matchAlgorithm', e.target.value as 'ncc' | 'fast_color')
+                  }
+                  aria-label="比對演算法模式"
                 >
-                  <option value="ncc">🌟 歸一化互相關 (NCC/ZNCC) - 抗亮度變化的精準比對 (推薦)</option>
-                  <option value="fast_color">⚡ 快速色彩差值 (Color SAD) - 顏色敏感型圖示極速比對</option>
+                  <option value="ncc">歸一化互相關 (NCC/ZNCC) － 抗亮度變化的精準比對（推薦）</option>
+                  <option value="fast_color">快速色彩差值 (Color SAD) － 顏色敏感型圖示極速比對</option>
                 </select>
               </div>
             </div>
           </div>
 
-          {/* Section 2: Visual Overlays */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-              <Eye className="w-4 h-4 text-emerald-400" />
+          {/* 畫面視覺標籤與特效：四個開關。旋鈕位置本身就是狀態，
+              所以列上只留敘述，不再寫「開／關」。 */}
+          <div>
+            <h4 className="sect" style={{ marginBottom: 6 }}>
+              <Eye />
               畫面視覺標籤與特效
-            </h3>
+            </h4>
+            <div className="list">
+              <div className="row">
+                <span className="lab">
+                  <Target />
+                  在即時預覽畫面上繪製「辨識成功框」
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.showBoundingBoxesOnStream}
+                  aria-label="在即時預覽畫面上繪製辨識成功框"
+                  className="sw sm"
+                  onClick={() =>
+                    handleChange('showBoundingBoxesOnStream', !settings.showBoundingBoxesOnStream)
+                  }
+                >
+                  <i />
+                </button>
+              </div>
 
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-2.5">
-              <label className="flex items-center justify-between cursor-pointer text-xs text-slate-300">
-                <span>在即時預覽畫面上繪製「辨識成功框」</span>
-                <input
-                  type="checkbox"
-                  checked={settings.showBoundingBoxesOnStream}
-                  onChange={(e) => handleChange('showBoundingBoxesOnStream', e.target.checked)}
-                  className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0"
-                />
-              </label>
+              <div className="row">
+                <span className="lab">
+                  <Crosshair />
+                  顯示「自選偵測區域 (ROI)」虛線框
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.showRoiOnStream}
+                  aria-label="在畫面上顯示目標的自選偵測區域虛線框"
+                  className="sw sm"
+                  onClick={() => handleChange('showRoiOnStream', !settings.showRoiOnStream)}
+                >
+                  <i />
+                </button>
+              </div>
 
-              <label className="flex items-center justify-between cursor-pointer text-xs text-slate-300">
-                <span>在畫面上顯示目標的「自選偵測區域 (ROI)」虛線框</span>
-                <input
-                  type="checkbox"
-                  checked={settings.showRoiOnStream}
-                  onChange={(e) => handleChange('showRoiOnStream', e.target.checked)}
-                  className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0"
-                />
-              </label>
+              <div className="row">
+                <span className="lab">
+                  <Zap />
+                  命中時畫面向外閃爍光暈
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.flashScreenOnHit}
+                  aria-label="辨識命中時畫面向外閃爍光暈"
+                  className="sw sm"
+                  onClick={() => handleChange('flashScreenOnHit', !settings.flashScreenOnHit)}
+                >
+                  <i />
+                </button>
+              </div>
 
-              <label className="flex items-center justify-between cursor-pointer text-xs text-slate-300">
-                <span>辨識命中時畫面向外閃爍光暈 (Screen Flash)</span>
-                <input
-                  type="checkbox"
-                  checked={settings.flashScreenOnHit}
-                  onChange={(e) => handleChange('flashScreenOnHit', e.target.checked)}
-                  className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0"
-                />
-              </label>
-
-              <label className="flex items-center justify-between cursor-pointer text-xs text-slate-300">
-                <span>辨識命中時施放慶祝彩帶特效</span>
-                <input
-                  type="checkbox"
-                  checked={settings.confettiOnHit}
-                  onChange={(e) => handleChange('confettiOnHit', e.target.checked)}
-                  className="w-4 h-4 rounded bg-slate-900 border-slate-700 text-emerald-600 focus:ring-0"
-                />
-              </label>
+              <div className="row">
+                <span className="lab">
+                  <Sparkles />
+                  命中時施放慶祝彩帶特效
+                </span>
+                <div style={{ flex: 1 }} />
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={settings.confettiOnHit}
+                  aria-label="辨識命中時施放慶祝彩帶特效"
+                  className="sw sm"
+                  onClick={() => handleChange('confettiOnHit', !settings.confettiOnHit)}
+                >
+                  <i />
+                </button>
+              </div>
             </div>
           </div>
 
-          {/* Section 3: Audio & Notifications */}
-          <div className="space-y-3">
-            <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-              <Volume2 className="w-4 h-4 text-cyan-400" />
+          {/* 聲音與瀏覽器系統通知 */}
+          <div>
+            <h4 className="sect" style={{ marginBottom: 6 }}>
+              <Volume2 />
               聲音與瀏覽器系統通知
-            </h3>
-
-            <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 space-y-3">
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-medium text-slate-300">
-                    提示音效音量 (Sound Volume): {Math.round(settings.masterVolume * 100)}%
-                  </label>
+            </h4>
+            <div className="list">
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <Volume2 />
+                    提示音效音量
+                  </span>
+                  <span className="val num">{Math.round(settings.masterVolume * 100)}%</span>
                 </div>
                 <input
                   type="range"
@@ -189,23 +324,26 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   step="0.05"
                   value={settings.masterVolume}
                   onChange={(e) => handleChange('masterVolume', Number(e.target.value))}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                  aria-label="提示音效音量"
+                  style={{ '--p': `${settings.masterVolume * 100}%` } as React.CSSProperties}
                 />
               </div>
 
-              {/* Speech Voice Volume Slider */}
-              <div className="pt-2 border-t border-slate-800">
-                <div className="flex justify-between items-center mb-1">
-                  <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
-                    <Mic className="w-3.5 h-3.5 text-amber-400" />
-                    語音朗讀音量 (Voice Volume): {Math.round((settings.speechVolume ?? 1.0) * 100)}%
-                  </label>
+              <div className="row stack">
+                <div className="head">
+                  <span className="lab">
+                    <Mic />
+                    語音朗讀音量
+                  </span>
+                  <span className="val num">{Math.round(speechVolume * 100)}%</span>
+                  <i className="s" />
                   <button
                     type="button"
-                    onClick={() => speakAlert('語音音量測試', settings.speechVolume ?? 1.0)}
-                    className="px-2 py-0.5 rounded bg-slate-800 hover:bg-slate-700 text-amber-300 text-[10px] font-bold border border-slate-700 transition-colors"
+                    className="btn mini"
+                    onClick={() => speakAlert('語音音量測試', speechVolume)}
                   >
-                    🔊 試聽語音
+                    <Volume2 />
+                    試聽語音
                   </button>
                 </div>
                 <input
@@ -213,26 +351,25 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
                   min="0"
                   max="1"
                   step="0.05"
-                  value={settings.speechVolume ?? 1.0}
+                  value={speechVolume}
                   onChange={(e) => handleChange('speechVolume', Number(e.target.value))}
-                  className="w-full h-1.5 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-amber-500"
+                  aria-label="語音朗讀音量"
+                  style={{ '--p': `${speechVolume * 100}%` } as React.CSSProperties}
                 />
               </div>
 
-              <div className="flex items-center justify-between pt-2 border-t border-slate-800">
-                <div>
-                  <span className="text-xs text-slate-300 font-medium block">瀏覽器桌面推播通知</span>
-                  <span className="text-[11px] text-slate-400">
-                    狀態: {notificationPermission === 'granted' ? '✅ 已授權' : notificationPermission === 'denied' ? '❌ 已拒絕' : '⚠️ 未設定'}
-                  </span>
-                </div>
+              <div className="row">
+                <span className="lab">
+                  <Bell />
+                  瀏覽器桌面推播通知
+                </span>
+                <div style={{ flex: 1 }} />
+                <span className={perm.cls}>
+                  {perm.icon}
+                  {perm.text}
+                </span>
                 {notificationPermission !== 'granted' && (
-                  <button
-                    type="button"
-                    onClick={onRequestBrowserNotification}
-                    className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1"
-                  >
-                    <Bell className="w-3.5 h-3.5" />
+                  <button type="button" className="btn mini" onClick={onRequestBrowserNotification}>
                     請求授權
                   </button>
                 )}
@@ -240,43 +377,36 @@ export const SettingsModal: React.FC<SettingsModalProps> = ({
             </div>
           </div>
 
-          {/* 軟體更新 */}
+          {/* 軟體更新：沒有帶 onCheckForUpdate 進來就整段不顯示（瀏覽器版沒有更新器） */}
           {onCheckForUpdate && (
-            <div className="space-y-3">
-              <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider flex items-center gap-2">
-                <Download className="w-3.5 h-3.5" />
+            <div>
+              <h4 className="sect" style={{ marginBottom: 6 }}>
+                <Download />
                 軟體更新
-              </h3>
-              <div className="bg-slate-950 p-4 rounded-xl border border-slate-800 flex items-center justify-between gap-3">
-                <div>
-                  <p className="text-sm text-white font-medium">檢查是否有新版本</p>
-                  <p className="text-xs text-slate-500">
-                    每次啟動會自動檢查一次，有新版可以直接一鍵下載更新。
-                  </p>
+              </h4>
+              <div className="list">
+                <div className="row">
+                  <span className="lab">
+                    <Download />
+                    檢查是否有新版本
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  <button type="button" className="btn mini" onClick={onCheckForUpdate}>
+                    <Download />
+                    檢查更新
+                  </button>
                 </div>
-                <button
-                  type="button"
-                  onClick={onCheckForUpdate}
-                  className="px-3 py-1.5 bg-cyan-600 hover:bg-cyan-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1 shrink-0"
-                >
-                  <Download className="w-3.5 h-3.5" />
-                  檢查更新
-                </button>
               </div>
+              <p className="hint">每次啟動會自動檢查一次，有新版可以直接一鍵下載更新。</p>
             </div>
           )}
         </div>
 
-        {/* Footer */}
-        <div className="px-6 py-4 border-t border-slate-800 bg-slate-950 flex justify-end">
-          <button
-            type="button"
-            onClick={onClose}
-            className="px-5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors text-xs font-bold"
-          >
+        <footer>
+          <button type="button" className="btn ghost" onClick={onClose}>
             關閉設定
           </button>
-        </div>
+        </footer>
       </div>
     </div>
   );

@@ -13,6 +13,10 @@ export const DEFAULT_SETTINGS: GlobalSettings = {
   showRoiOnStream: true,
   confettiOnHit: true,
   autoScrollLogs: true,
+  // 外觀預設＝綠色＋深色，跟 tokens.css 裡「html 沒掛任何 class 時」的值一致，
+  // 所以舊設定檔補上這兩個欄位之後畫面不會突然變樣。
+  accent: 'emerald',
+  theme: 'dark',
 };
 
 export const COLOR_PALETTE = [

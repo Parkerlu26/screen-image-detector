@@ -10,22 +10,19 @@ import {
   Trash2,
   Play,
   RotateCcw,
-  Volume2,
-  ExternalLink,
   Layers,
-  ArrowRight,
+  ChevronRight,
+  Maximize2,
   X,
   Crosshair,
   Camera,
-  Keyboard,
-  Eye,
-  LayoutGrid,
-  LayoutList,
   FolderOpen,
-  Save,
-  Bell,
   Mic,
-  Power,
+  Pencil,
+  Check,
+  Zap,
+  Monitor,
+  Target as TargetIcon,
 } from 'lucide-react';
 
 interface AutomationAndTimersProps {
@@ -433,1157 +430,1064 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
   };
 
   return (
-    <div className="flex-1 flex flex-col h-full bg-slate-950 p-4 space-y-4 overflow-y-auto min-h-0">
-      {/* Top Header & Sub Tabs */}
-      <div className="flex flex-wrap items-center justify-between gap-4 p-4 bg-slate-900 border border-slate-800 rounded-2xl shadow-xl shrink-0">
-        <div>
-          <h2 className="text-base font-bold text-white flex items-center gap-2">
-            <Sparkles className="w-5 h-5 text-emerald-400" />
+    <div className="page" style={{ gridTemplateColumns: 'minmax(0,1fr)' }}>
+      {/* 頁首與子分頁：子分頁用的是頂列同一顆分段控制（滑塊左右滑） */}
+      <div className="bar2" style={{ justifyContent: 'space-between', alignItems: 'flex-start' }}>
+        <div style={{ minWidth: 0 }}>
+          <h2
+            style={{
+              margin: 0,
+              fontSize: 'var(--fs3)',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Sparkles style={{ width: 15, height: 15, color: 'var(--acc-txt)' }} />
             進階聯動 ＆ 技能倒數計時組
           </h2>
-          <p className="text-xs text-slate-400 mt-0.5">
+          <p
+            style={{
+              margin: '3px 0 0',
+              fontSize: 'var(--fs1)',
+              color: 'var(--dim)',
+              lineHeight: 1.5,
+              maxWidth: '52ch',
+            }}
+          >
             配置按鍵技能倒數計時組與桌面置頂透明懸浮窗，或設定多圖命中自動右鍵點擊回中
           </p>
         </div>
 
         {/* Sub Navigation */}
-        <div className="flex items-center gap-2 bg-slate-950 p-1 rounded-xl border border-slate-800 text-xs">
+        <div
+          className="seg"
+          role="tablist"
+          style={{ '--n': 2, '--i': activeSubTab === 'timers' ? 0 : 1 } as React.CSSProperties}
+        >
+          <div className="seg-thumb" />
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'timers'}
             onClick={() => setActiveSubTab('timers')}
-            className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeSubTab === 'timers'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
           >
-            <Clock className="w-3.5 h-3.5" />
-            技能計時組設定 ({timers.length})
+            <span className="emo">⏱️</span>
+            技能計時組設定
+            <span className="count">{timers.length}</span>
           </button>
           <button
             type="button"
+            role="tab"
+            aria-selected={activeSubTab === 'combo'}
             onClick={() => setActiveSubTab('combo')}
-            className={`px-3.5 py-1.5 rounded-lg font-bold transition-all flex items-center gap-1.5 cursor-pointer ${
-              activeSubTab === 'combo'
-                ? 'bg-emerald-600 text-white shadow-md'
-                : 'text-slate-400 hover:text-white'
-            }`}
           >
-            <MousePointerClick className="w-3.5 h-3.5" />
-            條件觸發自動點擊 ({rules.length})
+            <span className="emo">🖱️</span>
+            條件觸發自動點擊
+            <span className="count">{rules.length}</span>
           </button>
         </div>
       </div>
 
       {/* ── SUB-TAB 1: 技能計時組設定 ── */}
       {activeSubTab === 'timers' && (
-        <div className="space-y-4 flex-1">
-          {/* Action Toolbar with Floating Window Controls */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/80 border border-slate-800 rounded-2xl">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleOpenAddTimer}
-                className="px-3.5 py-2 bg-rose-600 hover:bg-rose-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer shadow-rose-950/50"
-              >
-                <Plus className="w-4 h-4" />
+        <div className="subgrid">
+          {/* ── 計時組：卡片列表 ── */}
+          <div className="full">
+            <div className="bar2" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp2)' }}>
+              <h4 className="sect" style={{ margin: 0 }}>
+                <Clock />
+                計時組
+              </h4>
+              <button type="button" className="btn pri" onClick={handleOpenAddTimer}>
+                <Plus />
                 新增計時組設定
               </button>
             </div>
-
-            {/* Floating Window Toolbar Controls */}
-            <div className="flex flex-wrap items-center gap-2.5 bg-slate-950 px-3 py-1.5 rounded-xl border border-slate-800 text-xs">
-              {/* Layout Switch: Horizontal / Vertical */}
-              <div className="flex items-center gap-1">
-                <span className="text-slate-400 text-[11px]">排版:</span>
-                <button
-                  type="button"
-                  onClick={() => onChangeFloatingLayout('horizontal')}
-                  className={`p-1 rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
-                    floatingLayout === 'horizontal'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="橫排並列模式"
-                >
-                  <LayoutGrid className="w-3.5 h-3.5" />
-                  橫排
-                </button>
-                <button
-                  type="button"
-                  onClick={() => onChangeFloatingLayout('vertical')}
-                  className={`p-1 rounded-lg text-[11px] font-semibold transition-colors flex items-center gap-1 cursor-pointer ${
-                    floatingLayout === 'vertical'
-                      ? 'bg-emerald-600 text-white'
-                      : 'text-slate-400 hover:text-slate-200'
-                  }`}
-                  title="直排清單模式"
-                >
-                  <LayoutList className="w-3.5 h-3.5" />
-                  直排
-                </button>
+            {timers.length === 0 ? (
+              <div className="empty">
+                <Clock />
+                <p style={{ color: 'var(--dim)', fontWeight: 600 }}>尚未建立任何技能計時組</p>
+                <p style={{ maxWidth: 320, lineHeight: 1.65 }}>
+                  點擊上方「新增計時組設定」，配置熱鍵（如 W、F1）、倒數秒數與技能圖示，懸浮窗即可即時顯示！
+                </p>
               </div>
+            ) : (
+              <div className="cards">
+                {timers.map((timer) => {
+                  const isEnabled = timer.enabled !== false;
+                  const isRunning = isEnabled && !!timer.isRunning;
+                  const percent = isRunning
+                    ? Math.max(0, Math.min(100, (timer.remainingSeconds / timer.durationSeconds) * 100))
+                    : 0;
 
-              {/* Icon Size Selector */}
-              {onChangeFloatingIconSize && (
-                <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
-                  <span className="text-slate-400 text-[11px]">圖示:</span>
-                  <select
-                    value={floatingIconSize}
-                    onChange={(e) => onChangeFloatingIconSize(Number(e.target.value))}
-                    className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none"
-                  >
-                    <option value={36}>36px (小)</option>
-                    <option value={46}>46px (中)</option>
-                    <option value={58}>58px (大)</option>
-                    <option value={72}>72px (特大)</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Text Size Selector */}
-              {onChangeFloatingTextSize && (
-                <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
-                  <span className="text-slate-400 text-[11px]">字體:</span>
-                  <select
-                    value={floatingTextSize}
-                    onChange={(e) => onChangeFloatingTextSize(Number(e.target.value))}
-                    className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none"
-                  >
-                    <option value={11}>11px (精簡)</option>
-                    <option value={13}>13px (標準)</option>
-                    <option value={16}>16px (大字)</option>
-                    <option value={20}>20px (超大)</option>
-                  </select>
-                </div>
-              )}
-
-              {/* Show Name Toggle */}
-              {onToggleFloatingShowName && (
-                <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
-                  <button
-                    type="button"
-                    onClick={() => onToggleFloatingShowName(!floatingShowName)}
-                    className={`px-2 py-0.5 rounded-lg text-[11px] font-semibold transition-colors cursor-pointer ${
-                      floatingShowName
-                        ? 'bg-indigo-600/30 text-indigo-300 border border-indigo-500/40'
-                        : 'bg-slate-900 text-slate-500 border border-slate-800'
-                    }`}
-                    title="切換是否顯示名稱"
-                  >
-                    {floatingShowName ? '🏷️ 顯示名稱' : '🏷️ 隱藏名稱'}
-                  </button>
-                </div>
-              )}
-
-              {/* Opacity Selector */}
-              <div className="flex items-center gap-1 pl-2 border-l border-slate-800">
-                <Eye className="w-3.5 h-3.5 text-slate-400" />
-                <span className="text-slate-400 text-[11px]">透明:</span>
-                <select
-                  value={floatingOpacity}
-                  onChange={(e) => onChangeFloatingOpacity(Number(e.target.value))}
-                  className="bg-slate-900 border border-slate-700 rounded-lg px-2 py-0.5 text-xs text-white focus:outline-none"
-                >
-                  <option value={1.0}>100%</option>
-                  <option value={0.85}>85%</option>
-                  <option value={0.65}>65%</option>
-                  <option value={0.4}>40%</option>
-                </select>
+                  return (
+                    <div key={timer.id} className={`tcard${isEnabled ? '' : ' off'}`}>
+                      {isRunning && (
+                        <div className="prog" style={{ '--w': `${percent}%` } as React.CSSProperties} />
+                      )}
+                      <div className="in">
+                        <div className="r1">
+                          <span className="ticon">
+                            {timer.imageDataUrl ? (
+                              <img
+                                src={timer.imageDataUrl}
+                                alt={timer.name}
+                                style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 1 }}
+                              />
+                            ) : (
+                              <span
+                                className="num"
+                                style={{
+                                  fontSize: 10,
+                                  lineHeight: 1.15,
+                                  padding: '0 2px',
+                                  textAlign: 'center',
+                                  color: 'var(--warn)',
+                                  fontWeight: 600,
+                                }}
+                              >
+                                {timer.hotkey}
+                              </span>
+                            )}
+                          </span>
+                          <div className="nm">
+                            <b title={timer.name}>{timer.name}</b>
+                            {!isEnabled && <span className="tag">已停用</span>}
+                          </div>
+                          <button
+                            type="button"
+                            className="btn mini ico-only"
+                            onClick={() => handleOpenEditTimer(timer)}
+                            aria-label="修改計時設定"
+                            title="修改計時設定"
+                          >
+                            <Pencil />
+                          </button>
+                          <button
+                            type="button"
+                            className="btn mini ico-only"
+                            onClick={() => handleDeleteTimer(timer.id)}
+                            aria-label="刪除計時組"
+                            title="刪除計時組"
+                            style={{ color: 'var(--bad)' }}
+                          >
+                            <Trash2 />
+                          </button>
+                          <button
+                            type="button"
+                            className="sw sm"
+                            role="switch"
+                            aria-checked={isEnabled}
+                            onClick={() => handleToggleTimerEnabled(timer.id)}
+                            aria-label={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
+                            title={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
+                          >
+                            <i />
+                          </button>
+                        </div>
+                        <div className={`bigcount${isRunning ? ' run' : ''}`}>
+                          {isEnabled ? timer.remainingSeconds.toFixed(1) : '——'}
+                          <small> / {timer.durationSeconds}s</small>
+                        </div>
+                        {timer.hotkey && (
+                          <div className="fsub">
+                            <span className="hk" style={{ height: 19, padding: '0 5px' }} title="快捷鍵">
+                              {timer.hotkey}
+                            </span>
+                          </div>
+                        )}
+                        <div className="foot">
+                          <button
+                            type="button"
+                            className="btn mini ico-only"
+                            onClick={() => onOpenCropForTimer(timer.id)}
+                            aria-label="從當前畫面截圖作為圖示"
+                            title="從當前畫面截圖作為圖示"
+                          >
+                            <Camera />
+                          </button>
+                          <div style={{ flex: 1 }} />
+                          <button
+                            type="button"
+                            className="btn mini"
+                            onClick={() => isEnabled && handleStartTimer(timer.id)}
+                            disabled={!isEnabled}
+                          >
+                            <Play />
+                            觸發
+                          </button>
+                          <button
+                            type="button"
+                            className="btn mini ico-only"
+                            onClick={() => isEnabled && handleResetTimer(timer.id)}
+                            disabled={!isEnabled}
+                            aria-label="重設計時"
+                            title="重設計時"
+                          >
+                            <RotateCcw />
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
               </div>
-
-              {/* Native Floating Window Toggle */}
-              <button
-                type="button"
-                onClick={() => onToggleFloatingWidget(!showFloatingWidget)}
-                className={`px-3 py-1 rounded-lg font-bold transition-all flex items-center gap-1.5 shadow-md cursor-pointer ml-1 ${
-                  showFloatingWidget
-                    ? 'bg-indigo-600 text-white shadow-indigo-950/40 border border-indigo-500/40 animate-pulse'
-                    : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                }`}
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                {showFloatingWidget ? '🪟 懸浮窗已開啟' : '開啟獨立置頂懸浮窗'}
-              </button>
-            </div>
+            )}
           </div>
 
-          {/* ── PROFESSIONAL GAMING CD TIMER CONFIG PANEL (with Individual Volume Sliders) ── */}
+          {/* ── 計時組設定：新增／修改同一份表單 ── */}
           {isEditingTimer && (
-            <form onSubmit={handleSaveTimer} className="p-6 bg-[#161a29] border border-slate-700/80 rounded-2xl space-y-4 shadow-2xl animate-in fade-in max-w-2xl mx-auto text-xs text-slate-200">
-              <div className="flex items-center justify-between border-b border-slate-800/80 pb-2.5">
-                <h3 className="text-sm font-bold text-white flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-rose-400" />
+            <div className="full">
+              <div className="bar2" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp2)' }}>
+                <h4 className="sect" style={{ margin: 0 }}>
+                  <Clock />
                   計時組設定
-                </h3>
+                </h4>
                 <button
                   type="button"
+                  className="btn mini ico-only"
                   onClick={() => setIsEditingTimer(false)}
-                  className="p-1 text-slate-400 hover:text-white"
+                  aria-label="關閉計時組設定"
+                  title="關閉計時組設定"
                 >
-                  <X className="w-4 h-4" />
+                  <X />
                 </button>
               </div>
-
-              {/* Row 1: 計時名稱 */}
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  計時名稱：
-                </label>
-                <div className="col-span-9">
-                  <input
-                    type="text"
-                    value={tName}
-                    onChange={(e) => setTName(e.target.value)}
-                    placeholder="例如：魔消"
-                    className="w-48 bg-[#1f2438] border border-slate-700/80 rounded px-3 py-1.5 text-xs text-white focus:outline-none focus:border-indigo-500"
-                    required
-                  />
-                </div>
-              </div>
-
-              {/* Row 2: 快捷鍵 */}
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  快捷鍵：
-                </label>
-                <div className="col-span-9 flex items-center gap-2">
-                  <input
-                    type="text"
-                    value={tHotkey}
-                    readOnly
-                    className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-3 py-1.5 text-xs font-mono font-bold text-amber-300 text-center"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setIsRecordingHotkey(true)}
-                    className={`px-3 py-1.5 rounded font-bold transition-all flex items-center gap-1 cursor-pointer ${
-                      isRecordingHotkey
-                        ? 'bg-amber-500 text-slate-950 shadow-lg animate-pulse'
-                        : 'bg-[#2b3350] hover:bg-[#343e62] text-slate-200 border border-slate-700'
-                    }`}
-                  >
-                    <Keyboard className="w-3.5 h-3.5" />
-                    {isRecordingHotkey ? '請在鍵盤按下按鍵...' : '點擊設定'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setTHotkey('')}
-                    className="px-2.5 py-1.5 bg-[#e05252] hover:bg-[#c94545] text-white rounded font-bold transition-colors cursor-pointer"
-                    title="清除快捷鍵"
-                  >
-                    ✕
-                  </button>
-                </div>
-              </div>
-
-              {/* Row 3: 倒數模式 */}
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  倒數模式：
-                </label>
-                <div className="col-span-9 flex items-center gap-4">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
+              <form onSubmit={handleSaveTimer} className="box">
+                <div className="form">
+                  <div className="frow">
+                    <span className="fl">計時名稱</span>
                     <input
-                      type="radio"
-                      name="tMode"
-                      checked={tMode === 'loop'}
-                      onChange={() => setTMode('loop')}
-                      className="accent-indigo-500"
+                      type="text"
+                      className="field"
+                      style={{ flex: 1, minWidth: 0 }}
+                      value={tName}
+                      onChange={(e) => setTName(e.target.value)}
+                      placeholder="例如：魔消"
+                      aria-label="計時名稱"
+                      required
                     />
-                    <span>自動循環</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="tMode"
-                      checked={tMode === 'stop_on_zero'}
-                      onChange={() => setTMode('stop_on_zero')}
-                      className="accent-indigo-500"
-                    />
-                    <span>倒數後停止</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="tMode"
-                      checked={tMode === 'two_phase'}
-                      onChange={() => setTMode('two_phase')}
-                      className="accent-indigo-500"
-                    />
-                    <span>雙回合切換</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Row 4: 倒數時間 (秒) */}
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  倒數時間 (秒)：
-                </label>
-                <div className="col-span-9">
-                  <input
-                    type="number"
-                    step="0.1"
-                    min="0.1"
-                    max="9999"
-                    value={tDuration}
-                    onChange={(e) => setTDuration(Math.max(0.1, Number(e.target.value)))}
-                    className="w-28 bg-[#1f2438] border border-slate-700/80 rounded px-3 py-1.5 text-xs text-white font-mono font-bold focus:outline-none focus:border-indigo-500"
-                  />
-                </div>
-              </div>
-
-              {/* Row 5: 圖示效果模式 */}
-              <div className="grid grid-cols-12 gap-2 items-center">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  圖示效果模式：
-                </label>
-                <div className="col-span-9 flex items-center gap-4">
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="tDisplayMode"
-                      checked={tDisplayMode === 'default'}
-                      onChange={() => setTDisplayMode('default')}
-                      className="accent-indigo-500"
-                    />
-                    <span>預設</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="tDisplayMode"
-                      checked={tDisplayMode === 'cooldown'}
-                      onChange={() => setTDisplayMode('cooldown')}
-                      className="accent-indigo-500"
-                    />
-                    <span>冷卻模式</span>
-                  </label>
-                  <label className="flex items-center gap-1.5 cursor-pointer">
-                    <input
-                      type="radio"
-                      name="tDisplayMode"
-                      checked={tDisplayMode === 'original_only'}
-                      onChange={() => setTDisplayMode('original_only')}
-                      className="accent-indigo-500"
-                    />
-                    <span>僅用原圖</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Row 6: 圖片 (圖示) - 僅作圖示，不作偵測 */}
-              <div className="grid grid-cols-12 gap-2 items-center pt-2 border-t border-slate-800/80">
-                <label className="col-span-3 font-semibold text-slate-300">
-                  圖片 (圖示)：
-                </label>
-                <div className="col-span-9 flex items-center gap-2 flex-wrap">
-                  <div className="w-8 h-8 rounded border border-slate-700 bg-slate-950 flex items-center justify-center overflow-hidden shrink-0">
-                    {tImageDataUrl ? (
-                      <img src={tImageDataUrl} alt="Icon" className="w-full h-full object-contain" />
-                    ) : (
-                      <span className="text-[10px] text-slate-500">無</span>
-                    )}
                   </div>
 
-                  <input
-                    type="text"
-                    value={tImageDataUrl ? `${tName}_icon.png` : '尚未設定圖示'}
-                    readOnly
-                    className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-2.5 py-1.5 text-[11px] text-slate-300 truncate"
-                  />
+                  <div className="frow">
+                    <span className="fl">快捷鍵</span>
+                    <span
+                      className={`hk${isRecordingHotkey ? ' rec' : ''}`}
+                      style={
+                        !isRecordingHotkey && !tHotkey
+                          ? { color: 'var(--dim2)', fontWeight: 500 }
+                          : undefined
+                      }
+                    >
+                      {isRecordingHotkey ? '請在鍵盤按下按鍵…' : tHotkey || '未設定'}
+                    </span>
+                    <button type="button" className="btn mini" onClick={() => setIsRecordingHotkey(true)}>
+                      <Zap />
+                      點擊設定
+                    </button>
+                    <button
+                      type="button"
+                      className="btn mini ico-only"
+                      onClick={() => setTHotkey('')}
+                      aria-label="清除快捷鍵"
+                      title="清除快捷鍵"
+                      style={{ color: 'var(--bad)' }}
+                    >
+                      <X />
+                    </button>
+                  </div>
 
-                  <button
-                    type="button"
-                    onClick={() =>
-                      onOpenCropForTimer(editingTimerId || undefined, (url) => setTImageDataUrl(url))
-                    }
-                    className="px-3 py-1.5 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs font-semibold flex items-center gap-1 border border-slate-700 cursor-pointer"
-                  >
-                    <Camera className="w-3.5 h-3.5 text-emerald-400" />
-                    截圖圖示
-                  </button>
+                  <div className="frow">
+                    <span className="fl">倒數模式</span>
+                    <div className="radios">
+                      <label>
+                        <input type="radio" name="tMode" checked={tMode === 'loop'} onChange={() => setTMode('loop')} />
+                        <span>自動循環</span>
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="tMode"
+                          checked={tMode === 'stop_on_zero'}
+                          onChange={() => setTMode('stop_on_zero')}
+                        />
+                        <span>倒數後停止</span>
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="tMode"
+                          checked={tMode === 'two_phase'}
+                          onChange={() => setTMode('two_phase')}
+                        />
+                        <span>雙回合切換</span>
+                      </label>
+                    </div>
+                  </div>
 
-                  <label className="px-3 py-1.5 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs font-semibold flex items-center gap-1 border border-slate-700 cursor-pointer">
-                    <FolderOpen className="w-3.5 h-3.5 text-cyan-400" />
-                    瀏覽照片
+                  <div className="frow">
+                    <span className="fl">倒數時間</span>
                     <input
-                      type="file"
-                      accept="image/*"
-                      onChange={(e) => {
-                        const f = e.target.files?.[0];
-                        if (f) {
-                          const reader = new FileReader();
-                          reader.onload = (re) => {
-                            const url = re.target?.result as string;
-                            if (url) setTImageDataUrl(url);
-                          };
-                          reader.readAsDataURL(f);
-                        }
-                      }}
-                      className="hidden"
+                      type="number"
+                      className="field num"
+                      style={{ width: 66 }}
+                      step="0.1"
+                      min="0.1"
+                      max="9999"
+                      value={tDuration}
+                      onChange={(e) => setTDuration(Math.max(0.1, Number(e.target.value)))}
+                      aria-label="倒數時間（秒）"
                     />
-                  </label>
-                </div>
-              </div>
+                    <span className="val">秒</span>
+                  </div>
 
-              {/* ── Section A: 倒數計時完成提示音效 ＆ 語音朗讀 (含獨立音量) ── */}
-              <div className="space-y-2.5 pt-2 border-t border-slate-800/80 bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/60">
-                <div className="font-bold text-emerald-400 flex items-center gap-1.5">
-                  <Bell className="w-4 h-4" />
-                  倒數完成提示（結束時觸發）：
+                  <div className="frow">
+                    <span className="fl">圖示效果</span>
+                    <div className="radios">
+                      <label>
+                        <input
+                          type="radio"
+                          name="tDisplayMode"
+                          checked={tDisplayMode === 'default'}
+                          onChange={() => setTDisplayMode('default')}
+                        />
+                        <span>預設</span>
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="tDisplayMode"
+                          checked={tDisplayMode === 'cooldown'}
+                          onChange={() => setTDisplayMode('cooldown')}
+                        />
+                        <span>冷卻模式</span>
+                      </label>
+                      <label>
+                        <input
+                          type="radio"
+                          name="tDisplayMode"
+                          checked={tDisplayMode === 'original_only'}
+                          onChange={() => setTDisplayMode('original_only')}
+                        />
+                        <span>僅用原圖</span>
+                      </label>
+                    </div>
+                  </div>
+
+                  <div className="frow">
+                    <span className="fl">圖片（圖示）</span>
+                    <span className="ticon" style={{ width: 32, height: 32 }}>
+                      {tImageDataUrl ? (
+                        <img
+                          src={tImageDataUrl}
+                          alt="計時圖示"
+                          style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 1 }}
+                        />
+                      ) : (
+                        <span style={{ fontSize: 10, color: 'var(--dim2)' }}>無</span>
+                      )}
+                    </span>
+                    <input
+                      type="text"
+                      className="field"
+                      style={{ width: 150, flex: 'none' }}
+                      value={tImageDataUrl ? `${tName || '未命名'}_icon.png` : '尚未設定圖示'}
+                      readOnly
+                      aria-label="目前的圖示來源"
+                    />
+                    <button
+                      type="button"
+                      className="btn mini"
+                      onClick={() =>
+                        onOpenCropForTimer(editingTimerId || undefined, (url) => setTImageDataUrl(url))
+                      }
+                    >
+                      <Camera />
+                      截圖圖示
+                    </button>
+                    <label className="btn mini">
+                      <FolderOpen />
+                      瀏覽照片
+                      <input
+                        type="file"
+                        accept="image/*"
+                        onChange={(e) => {
+                          const f = e.target.files?.[0];
+                          if (f) {
+                            const reader = new FileReader();
+                            reader.onload = (re) => {
+                              const url = re.target?.result as string;
+                              if (url) setTImageDataUrl(url);
+                            };
+                            reader.readAsDataURL(f);
+                          }
+                        }}
+                        className="hide"
+                      />
+                    </label>
+                  </div>
+
                 </div>
 
-                {/* Sound Setting + Volume Slider */}
-                <div className="space-y-1.5 pl-2">
-                  <div className="grid grid-cols-12 gap-2 items-center">
-                    <label className="col-span-3 text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                {/* ── A：倒數完成提示音效 ＆ 語音朗讀（含獨立音量） ── */}
+                <h5 className="sect" style={{ margin: 'var(--sp3) 0 var(--sp2)' }}>
+                  A · 倒數完成提示（結束時觸發）
+                </h5>
+                <div className="form">
+                  <div className="frow">
+                    <label className="ckl">
                       <input
                         type="checkbox"
                         checked={tSoundOnComplete}
                         onChange={(e) => setTSoundOnComplete(e.target.checked)}
-                        className="accent-emerald-500"
                       />
                       <span>播放完成音效</span>
                     </label>
-                    <div className="col-span-9 flex items-center gap-2">
-                      <select
-                        value={tSoundType}
-                        disabled={!tSoundOnComplete}
-                        onChange={(e) => setTSoundType(e.target.value as SoundType)}
-                        className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-2 py-1 text-xs text-white focus:outline-none disabled:opacity-50"
-                      >
-                        <option value="double_ding">🎯 雙音</option>
-                        <option value="chime">🔔 清脆鈴聲</option>
-                        <option value="beep">🚨 電子嗶嗶聲</option>
-                        <option value="fanfare">🎺 勝利號角</option>
-                        <option value="coin">🪙 遊戲金幣聲</option>
-                        <option value="siren">⚠️ 急促警報</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => playAlertSound(tSoundType, tVolume * masterVolume)}
-                        className="px-2.5 py-1 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
-                      >
-                        <Play className="w-3 h-3 text-emerald-400" />
-                        測試
-                      </button>
-                    </div>
+                    <select
+                      className="field"
+                      style={{ width: 112 }}
+                      value={tSoundType}
+                      disabled={!tSoundOnComplete}
+                      onChange={(e) => setTSoundType(e.target.value as SoundType)}
+                      aria-label="完成音效"
+                    >
+                      <option value="double_ding">🎯 雙音</option>
+                      <option value="chime">🔔 清脆鈴聲</option>
+                      <option value="beep">🚨 電子嗶嗶聲</option>
+                      <option value="fanfare">🎺 勝利號角</option>
+                      <option value="coin">🪙 遊戲金幣聲</option>
+                      <option value="siren">⚠️ 急促警報</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn mini"
+                      onClick={() => playAlertSound(tSoundType, tVolume * masterVolume)}
+                    >
+                      <Play />
+                      測試
+                    </button>
                   </div>
-
-                  {/* Independent Completion Volume Slider */}
-                  <div className="grid grid-cols-12 gap-2 items-center pl-6">
-                    <span className="col-span-3 text-[11px] text-slate-400">完成音效音量：</span>
-                    <div className="col-span-9 flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        disabled={!tSoundOnComplete}
-                        value={Math.round(tVolume * 100)}
-                        onChange={(e) => setTVolume(Number(e.target.value) / 100)}
-                        className="w-36 h-1 bg-slate-800 rounded accent-emerald-500 cursor-pointer disabled:opacity-50"
-                      />
-                      <span className="font-mono text-emerald-400 font-bold text-xs w-8">
-                        {Math.round(tVolume * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* TTS Speech Setting */}
-                <div className="grid grid-cols-12 gap-2 items-center pl-2 pt-1 border-t border-slate-800/40">
-                  <label className="col-span-3 text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                  <div className="frow">
+                    <span className="fl">完成音效音量</span>
                     <input
-                      type="checkbox"
-                      checked={tSpeakOnComplete}
-                      onChange={(e) => setTSpeakOnComplete(e.target.checked)}
-                      className="accent-emerald-500"
+                      type="range"
+                      min="0"
+                      max="100"
+                      disabled={!tSoundOnComplete}
+                      value={Math.round(tVolume * 100)}
+                      onChange={(e) => setTVolume(Number(e.target.value) / 100)}
+                      style={
+                        {
+                          flex: 1,
+                          minWidth: 80,
+                          '--p': `${Math.round(tVolume * 100)}%`,
+                        } as React.CSSProperties
+                      }
+                      aria-label="完成音效音量"
                     />
-                    <span>語音說出名稱</span>
-                  </label>
-                  <div className="col-span-9 flex items-center gap-2">
-                    <span className="text-[11px] text-slate-400">後面接：</span>
+                    <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+                      {Math.round(tVolume * 100)}%
+                    </span>
+                  </div>
+
+                  <div className="frow">
+                    <label className="ckl">
+                      <input
+                        type="checkbox"
+                        checked={tSpeakOnComplete}
+                        onChange={(e) => setTSpeakOnComplete(e.target.checked)}
+                      />
+                      <span>語音說出名稱</span>
+                    </label>
+                    <span className="fsub">後面接：</span>
                     <input
                       type="text"
+                      className="field"
+                      style={{ flex: 1, minWidth: 96 }}
                       disabled={!tSpeakOnComplete}
                       value={tCustomSpeakText}
                       onChange={(e) => setTCustomSpeakText(e.target.value)}
                       placeholder="例如：計時完成 / 冷卻好了"
-                      className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-2.5 py-1 text-xs text-white disabled:opacity-50"
+                      aria-label="完成語音自訂文字"
                     />
                     <button
                       type="button"
+                      className="btn mini"
                       onClick={() => speakAlert(`${tName} ${tCustomSpeakText}`, speechVolume)}
-                      className="px-2.5 py-1 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
                     >
-                      <Mic className="w-3 h-3 text-cyan-400" />
+                      <Mic />
                       試聽語音
                     </button>
                   </div>
                 </div>
-              </div>
 
-              {/* ── Section B: 提前幾秒提示音效 ＆ 語音朗讀 (含獨立音量) ── */}
-              <div className="space-y-2.5 pt-2 border-t border-slate-800/80 bg-slate-950/40 p-3.5 rounded-xl border border-slate-800/60">
-                <div className="font-bold text-amber-400 flex items-center gap-1.5">
-                  <Clock className="w-4 h-4" />
-                  提前提醒（提前幾秒觸發，0 代表不提前）：
-                </div>
-
-                <div className="grid grid-cols-12 gap-2 items-center pl-2">
-                  <label className="col-span-3 text-slate-400">提前幾秒：</label>
-                  <div className="col-span-9 flex items-center gap-2">
+                {/* ── B：提前提醒音效 ＆ 語音朗讀（含獨立音量） ── */}
+                <h5 className="sect" style={{ margin: 'var(--sp3) 0 var(--sp2)' }}>
+                  B · 提前提醒（0 代表不提前）
+                </h5>
+                <div className="form">
+                  <div className="frow">
+                    <span className="fl">提前幾秒</span>
                     <input
                       type="number"
+                      className="field num"
+                      style={{ width: 56 }}
                       min="0"
                       max="60"
                       value={tLeadSeconds}
                       onChange={(e) => setTLeadSeconds(Number(e.target.value))}
-                      className="w-16 bg-[#1f2438] border border-slate-700/80 rounded px-2 py-1 text-xs text-white text-center font-bold font-mono"
+                      aria-label="提前幾秒"
                     />
-                    <span className="text-slate-400">秒 (若設 0 則不提前提醒)</span>
+                    <span className="val">秒</span>
+                    <span className="fsub">設 0 則不提前提醒</span>
                   </div>
-                </div>
 
-                {/* Lead Sound + Volume Slider */}
-                <div className="space-y-1.5 pl-2">
-                  <div className="grid grid-cols-12 gap-2 items-center">
-                    <label className="col-span-3 text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                  <div className="frow">
+                    <label className="ckl">
                       <input
                         type="checkbox"
                         checked={tSoundOnLead}
                         onChange={(e) => setTSoundOnLead(e.target.checked)}
-                        className="accent-amber-500"
                       />
                       <span>提前提示音效</span>
                     </label>
-                    <div className="col-span-9 flex items-center gap-2">
-                      <select
-                        value={tLeadSoundType}
-                        disabled={!tSoundOnLead || tLeadSeconds === 0}
-                        onChange={(e) => setTLeadSoundType(e.target.value as SoundType)}
-                        className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-2 py-1 text-xs text-white focus:outline-none disabled:opacity-50"
-                      >
-                        <option value="beep">🚨 電子嗶嗶聲 (Beep)</option>
-                        <option value="chime">🔔 清脆鈴聲</option>
-                        <option value="scifi">⚡ 科技脈衝</option>
-                        <option value="coin">🪙 遊戲金幣聲</option>
-                      </select>
-                      <button
-                        type="button"
-                        onClick={() => playAlertSound(tLeadSoundType, tLeadVolume * masterVolume)}
-                        className="px-2.5 py-1 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
-                      >
-                        <Play className="w-3 h-3 text-amber-400" />
-                        測試
-                      </button>
-                    </div>
+                    <select
+                      className="field"
+                      style={{ width: 112 }}
+                      value={tLeadSoundType}
+                      disabled={!tSoundOnLead || tLeadSeconds === 0}
+                      onChange={(e) => setTLeadSoundType(e.target.value as SoundType)}
+                      aria-label="提前提示音效"
+                    >
+                      <option value="beep">🚨 電子嗶嗶聲</option>
+                      <option value="chime">🔔 清脆鈴聲</option>
+                      <option value="scifi">⚡ 科技脈衝</option>
+                      <option value="coin">🪙 遊戲金幣聲</option>
+                    </select>
+                    <button
+                      type="button"
+                      className="btn mini"
+                      onClick={() => playAlertSound(tLeadSoundType, tLeadVolume * masterVolume)}
+                    >
+                      <Play />
+                      測試
+                    </button>
                   </div>
 
-                  {/* Independent Lead Volume Slider */}
-                  <div className="grid grid-cols-12 gap-2 items-center pl-6">
-                    <span className="col-span-3 text-[11px] text-slate-400">提前音效音量：</span>
-                    <div className="col-span-9 flex items-center gap-2">
-                      <input
-                        type="range"
-                        min="0"
-                        max="100"
-                        disabled={!tSoundOnLead || tLeadSeconds === 0}
-                        value={Math.round(tLeadVolume * 100)}
-                        onChange={(e) => setTLeadVolume(Number(e.target.value) / 100)}
-                        className="w-36 h-1 bg-slate-800 rounded accent-amber-500 cursor-pointer disabled:opacity-50"
-                      />
-                      <span className="font-mono text-amber-400 font-bold text-xs w-8">
-                        {Math.round(tLeadVolume * 100)}%
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* Lead TTS Speech */}
-                <div className="grid grid-cols-12 gap-2 items-center pl-2 pt-1 border-t border-slate-800/40">
-                  <label className="col-span-3 text-slate-400 flex items-center gap-1.5 cursor-pointer">
+                  <div className="frow">
+                    <span className="fl">提前音效音量</span>
                     <input
-                      type="checkbox"
-                      checked={tSpeakOnLead}
-                      onChange={(e) => setTSpeakOnLead(e.target.checked)}
-                      className="accent-amber-500"
+                      type="range"
+                      min="0"
+                      max="100"
+                      disabled={!tSoundOnLead || tLeadSeconds === 0}
+                      value={Math.round(tLeadVolume * 100)}
+                      onChange={(e) => setTLeadVolume(Number(e.target.value) / 100)}
+                      style={
+                        {
+                          flex: 1,
+                          minWidth: 80,
+                          '--p': `${Math.round(tLeadVolume * 100)}%`,
+                        } as React.CSSProperties
+                      }
+                      aria-label="提前音效音量"
                     />
-                    <span>提前語音說出</span>
-                  </label>
-                  <div className="col-span-9 flex items-center gap-2">
-                    <span className="text-[11px] text-slate-400">後面接：</span>
+                    <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+                      {Math.round(tLeadVolume * 100)}%
+                    </span>
+                  </div>
+
+                  <div className="frow">
+                    <label className="ckl">
+                      <input
+                        type="checkbox"
+                        checked={tSpeakOnLead}
+                        onChange={(e) => setTSpeakOnLead(e.target.checked)}
+                      />
+                      <span>提前語音說出</span>
+                    </label>
+                    <span className="fsub">後面接：</span>
                     <input
                       type="text"
+                      className="field"
+                      style={{ flex: 1, minWidth: 96 }}
                       disabled={!tSpeakOnLead || tLeadSeconds === 0}
                       value={tCustomLeadSpeakText}
                       onChange={(e) => setTCustomLeadSpeakText(e.target.value)}
                       placeholder="例如：快好了 / 還有3秒"
-                      className="w-36 bg-[#1f2438] border border-slate-700/80 rounded px-2.5 py-1 text-xs text-white disabled:opacity-50"
+                      aria-label="提前語音自訂文字"
                     />
                     <button
                       type="button"
+                      className="btn mini"
                       onClick={() => speakAlert(`${tName} ${tCustomLeadSpeakText}`, speechVolume)}
-                      className="px-2.5 py-1 bg-[#2b3350] hover:bg-[#343e62] text-slate-200 rounded text-xs flex items-center gap-1 border border-slate-700 cursor-pointer"
                     >
-                      <Mic className="w-3 h-3 text-amber-400" />
+                      <Mic />
                       試聽語音
                     </button>
                   </div>
                 </div>
-              </div>
 
-              {/* Bottom Submit Buttons */}
-              <div className="flex items-center gap-3 pt-3 border-t border-slate-800/80">
-                <button
-                  type="submit"
-                  className="px-6 py-2.5 bg-[#e05252] hover:bg-[#c94545] text-white rounded-lg text-xs font-bold transition-all shadow-lg flex items-center gap-1.5 cursor-pointer"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  儲存該計時
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingTimer(false)}
-                  className="px-5 py-2.5 bg-[#2b3350] hover:bg-[#343e62] text-slate-300 rounded-lg text-xs font-semibold transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-              </div>
-            </form>
+                <div style={{ display: 'flex', gap: 'var(--sp2)', marginTop: 'var(--sp3)' }}>
+                  <button type="submit" className="btn pri">
+                    <Check />
+                    儲存該計時
+                  </button>
+                  <button type="button" className="btn ghost" onClick={() => setIsEditingTimer(false)}>
+                    取消
+                  </button>
+                </div>
+              </form>
+            </div>
           )}
 
-          {/* Timers Grid */}
-          {timers.length === 0 ? (
-            <div className="p-8 bg-slate-900/60 border border-slate-800 rounded-2xl text-center space-y-2">
-              <Clock className="w-10 h-10 text-slate-600 mx-auto" />
-              <h3 className="text-xs font-bold text-slate-300">尚未建立任何技能計時組</h3>
-              <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
-                點擊上方「新增計時組設定」，配置熱鍵（如 W、F1）、倒數秒數與技能圖示，懸浮窗即可即時顯示！
-              </p>
+          {/* ── 置頂懸浮計時視窗：只有一顆開關，開了就變成「懸浮窗已開啟」 ── */}
+          <div className="full">
+            <div className="bar2" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp2)' }}>
+              <h4 className="sect" style={{ margin: 0 }}>
+                <Monitor />
+                置頂懸浮計時視窗
+              </h4>
+              <button
+                type="button"
+                className="btn"
+                aria-pressed={showFloatingWidget}
+                onClick={() => onToggleFloatingWidget(!showFloatingWidget)}
+                style={showFloatingWidget ? { color: 'var(--acc-txt)' } : undefined}
+              >
+                <Maximize2 />
+                {showFloatingWidget ? '懸浮窗已開啟' : '開啟獨立置頂懸浮窗'}
+              </button>
             </div>
-          ) : (
-            <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-              {timers.map((timer) => {
-                const isEnabled = timer.enabled !== false;
-                const percent = isEnabled ? Math.max(0, (timer.remainingSeconds / timer.durationSeconds) * 100) : 0;
-
-                return (
-                  <div
-                    key={timer.id}
-                    className={`p-4 bg-slate-900 border rounded-2xl shadow-xl flex flex-col justify-between space-y-3 relative overflow-hidden transition-all duration-200 ${
-                      isEnabled ? 'border-slate-800' : 'border-slate-800/40 opacity-50'
-                    }`}
-                  >
-                    {/* Top Progress Bar */}
-                    <div
-                      className="absolute top-0 left-0 h-1 bg-emerald-500 transition-all duration-150"
-                      style={{ width: `${percent}%` }}
-                    />
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2.5">
-                        {/* Custom Image / Icon */}
-                        {timer.imageDataUrl ? (
-                          <img
-                            src={timer.imageDataUrl}
-                            alt={timer.name}
-                            className="w-10 h-10 rounded-lg border border-slate-700 object-contain bg-slate-950 p-0.5"
-                          />
-                        ) : (
-                          <div className="w-10 h-10 rounded-lg bg-slate-950 border border-amber-500/40 flex items-center justify-center font-bold text-amber-300 font-mono text-sm">
-                            {timer.hotkey}
-                          </div>
-                        )}
-                        <div>
-                          <div className="flex items-center gap-1.5">
-                            <h4 className="text-xs font-bold text-white truncate max-w-[110px]">{timer.name}</h4>
-                            {!isEnabled && (
-                              <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-700 text-slate-400 border border-slate-600">
-                                已停用
-                              </span>
-                            )}
-                          </div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            <span className="px-1.5 py-0.2 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                              按鍵: {timer.hotkey}
-                            </span>
-                            <span className="text-[10px] text-slate-400">
-                              {timer.durationSeconds}s
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1">
-                        {/* Enable / Disable Toggle */}
-                        <button
-                          type="button"
-                          onClick={() => handleToggleTimerEnabled(timer.id)}
-                          className={`p-1.5 rounded transition-colors cursor-pointer ${
-                            isEnabled
-                              ? 'text-emerald-400 hover:text-slate-400 hover:bg-slate-800'
-                              : 'text-slate-600 hover:text-emerald-400 hover:bg-slate-800'
-                          }`}
-                          title={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
-                        >
-                          <Power className="w-3.5 h-3.5" />
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleOpenEditTimer(timer)}
-                          className="p-1 text-slate-400 hover:text-white rounded transition-colors cursor-pointer"
-                          title="修改計時設定"
-                        >
-                          ✏️
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => handleDeleteTimer(timer.id)}
-                          className="p-1 text-slate-500 hover:text-rose-400 rounded transition-colors cursor-pointer"
-                          title="刪除計時組"
-                        >
-                          <Trash2 className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {/* Big Countdown Display */}
-                    <div className="text-center py-2 bg-slate-950 rounded-xl border border-slate-800/80">
-                      <div className={`text-2xl font-black font-mono tracking-wider ${isEnabled ? 'text-emerald-400' : 'text-slate-600'}`}>
-                        {isEnabled ? timer.remainingSeconds.toFixed(1) : '——'} <span className="text-xs font-normal text-slate-400">/ {timer.durationSeconds}s</span>
-                      </div>
-                    </div>
-
-                    {/* Controls */}
-                    <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800/60">
-                      <button
-                        type="button"
-                        onClick={() => onOpenCropForTimer(timer.id)}
-                        className="px-2 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-300 text-[10px] font-medium transition-colors flex items-center gap-1 cursor-pointer"
-                        title="從當前畫面截圖作為圖示"
-                      >
-                        <Camera className="w-3 h-3 text-emerald-400" />
-                        截圖
-                      </button>
-
-                      <div className="flex items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => isEnabled && handleStartTimer(timer.id)}
-                          disabled={!isEnabled}
-                          className={`px-3 py-1 rounded-lg text-xs font-bold transition-all shadow flex items-center gap-1 ${
-                            isEnabled
-                              ? 'bg-emerald-600 hover:bg-emerald-500 text-white cursor-pointer'
-                              : 'bg-slate-800 text-slate-600 cursor-not-allowed'
-                          }`}
-                        >
-                          <Play className="w-3 h-3" />
-                          觸發
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => isEnabled && handleResetTimer(timer.id)}
-                          disabled={!isEnabled}
-                          className={`p-1.5 rounded-lg transition-colors ${
-                            isEnabled
-                              ? 'bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white cursor-pointer'
-                              : 'bg-slate-800/50 text-slate-700 cursor-not-allowed'
-                          }`}
-                          title="重設計時"
-                        >
-                          <RotateCcw className="w-3 h-3" />
-                        </button>
-                      </div>
-                    </div>
+            <div className="box">
+              <div className="form">
+                <div className="frow">
+                  <span className="fl">排版</span>
+                  <div className="opts">
+                    <button
+                      type="button"
+                      aria-pressed={floatingLayout === 'horizontal'}
+                      onClick={() => onChangeFloatingLayout('horizontal')}
+                      title="橫排並列模式"
+                    >
+                      橫排
+                    </button>
+                    <button
+                      type="button"
+                      aria-pressed={floatingLayout === 'vertical'}
+                      onClick={() => onChangeFloatingLayout('vertical')}
+                      title="直排清單模式"
+                    >
+                      直排
+                    </button>
                   </div>
-                );
-              })}
+                </div>
+                {onChangeFloatingIconSize && (
+                  <div className="frow">
+                    <span className="fl">圖示</span>
+                    <select
+                      className="field"
+                      style={{ width: 130 }}
+                      value={floatingIconSize}
+                      onChange={(e) => onChangeFloatingIconSize(Number(e.target.value))}
+                      aria-label="懸浮窗圖示大小"
+                    >
+                      <option value={36}>36px (小)</option>
+                      <option value={46}>46px (中)</option>
+                      <option value={58}>58px (大)</option>
+                      <option value={72}>72px (特大)</option>
+                    </select>
+                  </div>
+                )}
+                {onChangeFloatingTextSize && (
+                  <div className="frow">
+                    <span className="fl">字體</span>
+                    <select
+                      className="field"
+                      style={{ width: 130 }}
+                      value={floatingTextSize}
+                      onChange={(e) => onChangeFloatingTextSize(Number(e.target.value))}
+                      aria-label="懸浮窗字體大小"
+                    >
+                      <option value={11}>11px (精簡)</option>
+                      <option value={13}>13px (標準)</option>
+                      <option value={16}>16px (大字)</option>
+                      <option value={20}>20px (超大)</option>
+                    </select>
+                  </div>
+                )}
+
+                {onToggleFloatingShowName && (
+                  <div className="frow">
+                    <span className="fl">顯示名稱</span>
+                    <button
+                      type="button"
+                      className="sw sm"
+                      role="switch"
+                      aria-checked={floatingShowName}
+                      onClick={() => onToggleFloatingShowName(!floatingShowName)}
+                      aria-label="切換是否顯示名稱"
+                      title="切換是否顯示名稱"
+                    >
+                      <i />
+                    </button>
+                  </div>
+                )}
+                <div className="frow">
+                  <span className="fl">透明</span>
+                  <select
+                    className="field"
+                    style={{ width: 94 }}
+                    value={floatingOpacity}
+                    onChange={(e) => onChangeFloatingOpacity(Number(e.target.value))}
+                    aria-label="懸浮窗透明度"
+                  >
+                    <option value={1.0}>100%</option>
+                    <option value={0.85}>85%</option>
+                    <option value={0.65}>65%</option>
+                    <option value={0.4}>40%</option>
+                  </select>
+                </div>
+              </div>
             </div>
-          )}
+          </div>
         </div>
       )}
 
       {/* ── SUB-TAB 2: 條件觸發自動點擊 (with multi-target A, hotkeys, & editing) ── */}
       {activeSubTab === 'combo' && (
-        <div className="space-y-4 flex-1">
-          {/* Action Toolbar */}
-          <div className="flex flex-wrap items-center justify-between gap-3 p-3 bg-slate-900/80 border border-slate-800 rounded-2xl">
-            <div className="flex items-center gap-2">
-              <button
-                type="button"
-                onClick={handleOpenAddRule}
-                className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold transition-all shadow-md flex items-center gap-1.5 cursor-pointer shadow-emerald-950/50"
-              >
-                <Plus className="w-4 h-4" />
-                新增條件聯動規則
-              </button>
-              <button
-                type="button"
-                onClick={handleTestMouse}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-xl text-xs font-semibold border border-slate-700 transition-colors flex items-center gap-1.5 cursor-pointer"
-                title="測試滑鼠右鍵點擊並移回螢幕正中央"
-              >
-                <Crosshair className="w-3.5 h-3.5 text-cyan-400" />
-                測試右鍵點擊與回中
-              </button>
+        <div className="subgrid">
+          {/* ── 條件聯動規則：清單 ── */}
+          <div className="full">
+            <div className="bar2" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp2)' }}>
+              <h4 className="sect" style={{ margin: 0 }}>
+                <MousePointerClick />
+                條件聯動規則
+              </h4>
+              <div className="bar2">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={handleTestMouse}
+                  title="測試滑鼠右鍵點擊並移回螢幕正中央"
+                >
+                  <Crosshair />
+                  測試右鍵點擊與回中
+                </button>
+                <button type="button" className="btn pri" onClick={handleOpenAddRule}>
+                  <Plus />
+                  新增條件聯動規則
+                </button>
+              </div>
             </div>
-            <div className="text-[11px] text-slate-400">
+            <p style={{ margin: '0 0 var(--sp2)', fontSize: 'var(--fs0)', color: 'var(--dim2)', lineHeight: 1.5 }}>
               支援多選圖片 A（任一出現即觸發點擊）、自訂快捷按鍵（側錄）、多條件 AND 聯動
-            </div>
-          </div>
+            </p>
 
-          {/* Add / Edit Rule Modal / Form */}
-          {isEditingRule && (
-            <form
-              onSubmit={handleSaveRule}
-              className="p-4 bg-slate-900 border border-emerald-500/40 rounded-2xl space-y-4 shadow-2xl animate-in fade-in"
-            >
-              <div className="flex items-center justify-between border-b border-slate-800 pb-2.5">
-                <h3 className="text-xs font-bold text-emerald-400 flex items-center gap-1.5">
-                  <Layers className="w-4 h-4" />
-                  {editingRuleId ? '編輯條件自動點擊規則' : '新增條件自動點擊規則'}
-                </h3>
-                <button
-                  type="button"
-                  onClick={() => setIsEditingRule(false)}
-                  className="p-1 text-slate-400 hover:text-white"
-                >
-                  <X className="w-4 h-4" />
-                </button>
-              </div>
-
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                {/* Rule Name */}
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                    規則名稱
-                  </label>
-                  <input
-                    type="text"
-                    value={ruleName}
-                    onChange={(e) => setRuleName(e.target.value)}
-                    placeholder="例如：彈窗自動右鍵點掉"
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-emerald-500"
-                    required
-                  />
-                </div>
-
-                {/* Execution Action */}
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                    執行動作
-                  </label>
-                  <select
-                    value={ruleAction}
-                    onChange={(e) => setRuleAction(e.target.value as any)}
-                    className="w-full bg-slate-950 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-emerald-500"
-                  >
-                    <option value="right_click_and_center">🖱️ 滑鼠右鍵點擊目標 A 並回到螢幕正中央</option>
-                    <option value="left_click_and_center">🖱️ 滑鼠左鍵點擊目標 A 並回到螢幕正中央</option>
-                    <option value="sound_only">🔔 僅播放警報音效不點擊</option>
-                  </select>
-                </div>
-
-                {/* Hotkey Toggle */}
-                <div>
-                  <label className="text-[11px] font-semibold text-slate-300 block mb-1">
-                    快捷開關按鍵 (側錄)
-                  </label>
-                  <div className="flex items-center gap-1.5">
-                    <input
-                      type="text"
-                      value={ruleHotkey}
-                      onChange={(e) => setRuleHotkey(e.target.value.toUpperCase())}
-                      placeholder="無 (可手動或側錄)"
-                      className="flex-1 bg-slate-950 border border-slate-700 rounded-lg px-2.5 py-1.5 text-xs text-amber-300 font-mono font-bold uppercase focus:outline-none focus:border-amber-500"
-                    />
-                    <button
-                      type="button"
-                      onClick={() => setIsRecordingRuleHotkey(!isRecordingRuleHotkey)}
-                      className={`px-2.5 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-all cursor-pointer ${
-                        isRecordingRuleHotkey
-                          ? 'bg-rose-600 text-white animate-pulse'
-                          : 'bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700'
-                      }`}
-                    >
-                      <Keyboard className="w-3.5 h-3.5 text-amber-400" />
-                      {isRecordingRuleHotkey ? '按下按鍵...' : '側錄'}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Conditions Selection: Multi-select Target A + Target B */}
-              <div className="p-3 bg-slate-950 rounded-xl border border-slate-800 space-y-3">
-                <div className="space-y-1.5">
-                  <label className="text-xs font-bold text-emerald-400 flex items-center gap-1">
-                    <span>條件 1：當以下「目標圖片 A」出現時自動點擊該處</span>
-                    <span className="text-rose-400 text-xs">* (可多選，任一命中即點擊)</span>
-                  </label>
-
-                  {targets.length === 0 ? (
-                    <div className="p-3 bg-slate-900 rounded-lg text-slate-500 text-xs">
-                      目前尚未建立任何偵測目標，請先至「監測目標」清單新增截圖目標！
-                    </div>
-                  ) : (
-                    <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 max-h-44 overflow-y-auto p-2 bg-slate-900 rounded-xl border border-slate-800">
-                      {targets.map((t) => {
-                        const isChecked = ruleTargetIdsA.includes(t.id);
-                        return (
-                          <label
-                            key={t.id}
-                            className={`flex items-center gap-2 p-2 rounded-lg border text-xs cursor-pointer transition-all ${
-                              isChecked
-                                ? 'bg-emerald-950/40 border-emerald-500/60 text-white shadow-sm'
-                                : 'bg-slate-950 border-slate-800 text-slate-400 hover:border-slate-700'
-                            }`}
-                          >
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                if (e.target.checked) {
-                                  setRuleTargetIdsA([...ruleTargetIdsA, t.id]);
-                                } else {
-                                  setRuleTargetIdsA(ruleTargetIdsA.filter((id) => id !== t.id));
-                                }
-                              }}
-                              className="accent-emerald-500 w-3.5 h-3.5"
-                            />
-                            {t.imageDataUrl ? (
-                              <img
-                                src={t.imageDataUrl}
-                                alt={t.name}
-                                className="w-5 h-5 rounded object-contain bg-slate-900 border shrink-0"
-                                style={{ borderColor: t.color }}
-                              />
-                            ) : (
-                              <span
-                                className="w-2.5 h-2.5 rounded-full shrink-0"
-                                style={{ backgroundColor: t.color }}
-                              />
-                            )}
-                            <span className="truncate font-medium">{t.name}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-
-                {/* Condition B (Optional AND Link) */}
-                <div className="pt-2 border-t border-slate-800/80">
-                  <label className="text-[11px] font-bold text-cyan-400 block mb-1">
-                    條件 2 (選填)：且此圖片同時符合 (AND 聯動條件)
-                  </label>
-                  <select
-                    value={ruleTargetIdB}
-                    onChange={(e) => setRuleTargetIdB(e.target.value)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-cyan-500"
-                  >
-                    <option value="">-- 無 (單純只要符合上述目標 A 任一即觸發) --</option>
-                    {targets.map((t) => (
-                      <option key={t.id} value={t.id}>
-                        🎯 {t.name} (門檻: {Math.round(t.threshold * 100)}%)
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Sound & Volume & Cooldown */}
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 p-3 bg-slate-950 rounded-xl border border-slate-800 items-center">
-                <div>
-                  <label className="text-[11px] text-slate-400 block mb-1">觸發提示音效：</label>
-                  <select
-                    value={ruleSoundType}
-                    onChange={(e) => setRuleSoundType(e.target.value as SoundType)}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white"
-                  >
-                    <option value="double_ding">🎯 雙音</option>
-                    <option value="chime">🔔 清脆鈴聲</option>
-                    <option value="beep">🚨 電子嗶嗶聲</option>
-                    <option value="siren">⚠️ 急促警報</option>
-                    <option value="coin">🪙 遊戲金幣聲</option>
-                    <option value="fanfare">🎺 勝利號角</option>
-                  </select>
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-                    <span>單獨提示音量：</span>
-                    <span className="font-mono text-emerald-400 font-bold">{Math.round(ruleVolume * 100)}%</span>
-                  </div>
-                  <input
-                    type="range"
-                    min="0"
-                    max="100"
-                    value={Math.round(ruleVolume * 100)}
-                    onChange={(e) => setRuleVolume(Number(e.target.value) / 100)}
-                    className="w-full h-1.5 bg-slate-800 rounded accent-emerald-500 cursor-pointer mt-1"
-                  />
-                </div>
-
-                <div>
-                  <div className="flex items-center justify-between text-[11px] text-slate-400 mb-1">
-                    <span>動作觸發冷卻時間：</span>
-                    <span className="font-mono text-cyan-400 font-bold">{ruleCooldown} 秒</span>
-                  </div>
-                  <input
-                    type="number"
-                    min="1"
-                    max="60"
-                    value={ruleCooldown}
-                    onChange={(e) => setRuleCooldown(Math.max(1, Number(e.target.value)))}
-                    className="w-full bg-slate-900 border border-slate-700 rounded-lg px-2 py-1 text-xs text-white font-bold text-center"
-                  />
-                </div>
-              </div>
-
-              {/* Form Buttons */}
-              <div className="flex items-center justify-end gap-2 pt-2 border-t border-slate-800">
-                <button
-                  type="button"
-                  onClick={() => setIsEditingRule(false)}
-                  className="px-4 py-2 bg-slate-800 text-slate-300 rounded-xl text-xs font-semibold hover:bg-slate-700 transition-colors cursor-pointer"
-                >
-                  取消
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-lg shadow-emerald-950/50 transition-all cursor-pointer flex items-center gap-1.5"
-                >
-                  <Save className="w-3.5 h-3.5" />
-                  {editingRuleId ? '儲存修改' : '確認建立'}
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Rules List */}
           {rules.length === 0 ? (
-            <div className="p-8 bg-slate-900/60 border border-slate-800 rounded-2xl text-center space-y-2">
-              <MousePointerClick className="w-10 h-10 text-slate-600 mx-auto" />
-              <h3 className="text-xs font-bold text-slate-300">尚未建立任何條件聯動規則</h3>
-              <p className="text-[11px] text-slate-500 max-w-sm mx-auto">
+            <div className="empty">
+              <MousePointerClick />
+              <p style={{ color: 'var(--dim)', fontWeight: 600 }}>尚未建立任何條件聯動規則</p>
+              <p style={{ maxWidth: 340, lineHeight: 1.65 }}>
                 您可以設定「若 照片A出現 且 照片B符合 → 滑鼠右鍵自動點掉並回到畫面正中間」！
               </p>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-3">
-              {rules.map((rule) => {
-                const targetIds =
-                  rule.targetIdsA && rule.targetIdsA.length > 0
-                    ? rule.targetIdsA
-                    : rule.targetIdA
-                    ? [rule.targetIdA]
-                    : [];
-                const matchingTargetsA = targets.filter((t) => targetIds.includes(t.id));
-                const targetB = rule.targetIdB ? targets.find((t) => t.id === rule.targetIdB) : null;
+            <div className="box" style={{ padding: 'var(--sp2)' }}>
+              <div className="list" style={{ '--inset': '44px' } as React.CSSProperties}>
+                {rules.map((rule) => {
+                  const targetIds =
+                    rule.targetIdsA && rule.targetIdsA.length > 0
+                      ? rule.targetIdsA
+                      : rule.targetIdA
+                      ? [rule.targetIdA]
+                      : [];
+                  const matchingTargetsA = targets.filter((t) => targetIds.includes(t.id));
+                  const targetB = rule.targetIdB ? targets.find((t) => t.id === rule.targetIdB) : null;
+                  const isOn = !!rule.enabled;
 
-                return (
-                  <div
-                    key={rule.id}
-                    className={`p-4 bg-slate-900 border rounded-2xl transition-all flex flex-wrap items-center justify-between gap-3 shadow-xl ${
-                      rule.enabled
-                        ? 'border-slate-700 shadow-slate-950/50'
-                        : 'border-slate-800/60 opacity-60'
-                    }`}
-                  >
-                    <div className="space-y-1.5 flex-1 min-w-[280px]">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <span className={`w-2.5 h-2.5 rounded-full ${rule.enabled ? 'bg-emerald-400' : 'bg-slate-600'}`} />
-                        <h4 className="text-xs font-bold text-white">{rule.name}</h4>
+                  return (
+                    <div key={rule.id} className="row" style={{ alignItems: 'flex-start' }}>
+                      <span className="lab" style={{ alignSelf: 'center' }}>
+                        <MousePointerClick style={{ color: isOn ? 'var(--acc-txt)' : 'var(--dim2)' }} />
+                        <b style={{ fontWeight: 600, color: isOn ? 'var(--txt)' : 'var(--dim)' }}>{rule.name}</b>
+                      </span>
+
+                      <div className="flow" style={{ flex: 1, minWidth: 0 }}>
                         {rule.hotkey && (
-                          <span className="px-2 py-0.5 rounded text-[10px] font-mono font-bold bg-amber-500/20 text-amber-300 border border-amber-500/40">
-                            快捷鍵: {rule.hotkey}
+                          <span className="hk" style={{ height: 19, padding: '0 5px' }}>
+                            {rule.hotkey}
                           </span>
                         )}
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-slate-800 text-slate-400 border border-slate-700">
-                          冷卻 {rule.cooldownSeconds}s
+                        <span className="tag">冷卻 {rule.cooldownSeconds}s</span>
+                        <span>當出現</span>
+                        {matchingTargetsA.length === 0 ? (
+                          <span style={{ color: 'var(--bad)', fontWeight: 600 }}>(目標已刪除)</span>
+                        ) : (
+                          matchingTargetsA.map((t) => (
+                            <span
+                              key={t.id}
+                              className="cchip"
+                              style={{ '--tc': `${t.color}66` } as React.CSSProperties}
+                            >
+                              <TargetIcon style={{ color: t.color }} />
+                              {t.name}
+                            </span>
+                          ))
+                        )}
+                        {targetB && (
+                          <>
+                            <span>＋</span>
+                            <span>且同時符合</span>
+                            <span
+                              className="cchip"
+                              style={{ '--tc': `${targetB.color}66` } as React.CSSProperties}
+                            >
+                              <TargetIcon style={{ color: targetB.color }} />
+                              {targetB.name}
+                            </span>
+                          </>
+                        )}
+                        <ChevronRight />
+                        <span>
+                          {rule.action === 'right_click_and_center' && '右鍵點掉該目標並回到螢幕中間'}
+                          {rule.action === 'left_click_and_center' && '左鍵點掉該目標並回到螢幕中間'}
+                          {rule.action === 'sound_only' && '僅播放警報音效'}
                         </span>
                       </div>
 
-                      {/* Rule Logic Flow Display */}
-                      <div className="flex items-center gap-2 text-xs text-slate-300 flex-wrap">
-                        <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800 flex-wrap">
-                          <span className="text-[10px] text-slate-500">當出現:</span>
-                          {matchingTargetsA.length === 0 ? (
-                            <span className="text-rose-400 font-bold">(目標已刪除)</span>
-                          ) : (
-                            matchingTargetsA.map((t) => (
-                              <span
-                                key={t.id}
-                                className="font-bold px-1.5 py-0.2 rounded text-[11px] border"
-                                style={{
-                                  backgroundColor: `${t.color}20`,
-                                  borderColor: `${t.color}60`,
-                                  color: t.color,
-                                }}
-                              >
-                                {t.name}
-                              </span>
-                            ))
-                          )}
-                        </div>
-
-                        {targetB && (
-                          <>
-                            <span className="text-cyan-400 font-bold text-xs">＋</span>
-                            <div className="flex items-center gap-1.5 bg-slate-950 px-2.5 py-1 rounded-lg border border-slate-800">
-                              <span className="text-[10px] text-slate-500">且同時符合:</span>
-                              <span className="font-bold text-cyan-400">{targetB.name}</span>
-                            </div>
-                          </>
-                        )}
-
-                        <ArrowRight className="w-3.5 h-3.5 text-slate-500 shrink-0" />
-
-                        <div className="flex items-center gap-1.5 bg-indigo-950/50 px-2.5 py-1 rounded-lg border border-indigo-800/40 text-indigo-300 font-medium text-[11px]">
-                          {rule.action === 'right_click_and_center' && '🖱️ 右鍵點掉該目標並回到螢幕中間'}
-                          {rule.action === 'left_click_and_center' && '🖱️ 左鍵點掉該目標並回到螢幕中間'}
-                          {rule.action === 'sound_only' && '🔔 僅播放警報音效'}
-                        </div>
-                      </div>
-                    </div>
-
-                    <div className="flex items-center gap-1.5">
                       <button
                         type="button"
+                        className="sw sm"
+                        role="switch"
+                        aria-checked={isOn}
+                        aria-label={`啟用${rule.name}`}
                         onClick={() => handleToggleRule(rule.id)}
-                        className={`px-3 py-1.5 rounded-lg text-xs font-bold transition-colors cursor-pointer ${
-                          rule.enabled
-                            ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/40 hover:bg-emerald-500/30'
-                            : 'bg-slate-800 text-slate-500 border border-slate-700 hover:text-slate-300'
-                        }`}
                       >
-                        {rule.enabled ? '已啟用' : '已停用'}
+                        <i />
                       </button>
-
                       <button
                         type="button"
+                        className="btn mini ico-only"
                         onClick={() => handleOpenEditRule(rule)}
-                        className="p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                        aria-label="編輯規則"
                         title="編輯規則"
                       >
-                        ✏️
+                        <Pencil />
                       </button>
-
                       <button
                         type="button"
+                        className="btn mini ico-only"
                         onClick={() => handleDeleteRule(rule.id)}
-                        className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-lg transition-colors cursor-pointer"
+                        aria-label="刪除規則"
                         title="刪除規則"
+                        style={{ color: 'var(--bad)' }}
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 />
                       </button>
                     </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+
+          {/* ── 條件聯動規則：新增／修改同一份表單 ── */}
+          {isEditingRule && (
+            <div className="full">
+              <div className="bar2" style={{ justifyContent: 'space-between', marginBottom: 'var(--sp2)' }}>
+                <h4 className="sect" style={{ margin: 0 }}>
+                  <Layers />
+                  {editingRuleId ? '編輯條件自動點擊規則' : '新增條件自動點擊規則'}
+                </h4>
+                <button
+                  type="button"
+                  className="btn mini ico-only"
+                  onClick={() => setIsEditingRule(false)}
+                  aria-label="關閉規則設定"
+                  title="關閉規則設定"
+                >
+                  <X />
+                </button>
+              </div>
+              <form onSubmit={handleSaveRule} className="box">
+                <div className="form">
+                  <div className="frow">
+                    <span className="fl">規則名稱</span>
+                    <input
+                      type="text"
+                      className="field"
+                      style={{ flex: 1, minWidth: 0, maxWidth: 320 }}
+                      value={ruleName}
+                      onChange={(e) => setRuleName(e.target.value)}
+                      placeholder="例如：彈窗自動右鍵點掉"
+                      aria-label="規則名稱"
+                      required
+                    />
                   </div>
-                );
-              })}
+                  <div className="frow">
+                    <span className="fl">執行動作</span>
+                    <select
+                      className="field"
+                      style={{ flex: 1, minWidth: 0, maxWidth: 320 }}
+                      value={ruleAction}
+                      onChange={(e) => setRuleAction(e.target.value as any)}
+                      aria-label="執行動作"
+                    >
+                      <option value="right_click_and_center">🖱️ 滑鼠右鍵點擊目標 A 並回到螢幕正中央</option>
+                      <option value="left_click_and_center">🖱️ 滑鼠左鍵點擊目標 A 並回到螢幕正中央</option>
+                      <option value="sound_only">🔔 僅播放警報音效不點擊</option>
+                    </select>
+                  </div>
+                  <div className="frow">
+                    <span className="fl">快捷開關按鍵</span>
+                    <input
+                      type="text"
+                      className="field num"
+                      style={{ width: 96 }}
+                      value={ruleHotkey}
+                      onChange={(e) => setRuleHotkey(e.target.value.toUpperCase())}
+                      placeholder="無（可側錄）"
+                      aria-label="快捷開關按鍵"
+                    />
+                    <button
+                      type="button"
+                      className={`btn mini${isRecordingRuleHotkey ? ' pri' : ''}`}
+                      onClick={() => setIsRecordingRuleHotkey(!isRecordingRuleHotkey)}
+                    >
+                      <Zap />
+                      {isRecordingRuleHotkey ? '按下按鍵…' : '側錄'}
+                    </button>
+                    <span className="fsub">按下就會記錄，之後可用這顆鍵開關這條規則</span>
+                  </div>
+                </div>
+                <h5 className="sect" style={{ margin: 'var(--sp3) 0 var(--sp2)' }}>
+                  條件 1 · 當以下「目標圖片 A」出現時自動點擊該處（可多選，任一命中即點擊）
+                </h5>
+
+                {targets.length === 0 ? (
+                  <div
+                    className="checks"
+                    style={{ display: 'block', color: 'var(--dim2)', fontSize: 'var(--fs1)' }}
+                  >
+                    目前尚未建立任何偵測目標，請先至「監測目標」清單新增截圖目標！
+                  </div>
+                ) : (
+                  <div className="checks">
+                    {targets.map((t) => (
+                      <label key={t.id}>
+                        <input
+                          type="checkbox"
+                          checked={ruleTargetIdsA.includes(t.id)}
+                          onChange={(e) => {
+                            if (e.target.checked) {
+                              setRuleTargetIdsA([...ruleTargetIdsA, t.id]);
+                            } else {
+                              setRuleTargetIdsA(ruleTargetIdsA.filter((id) => id !== t.id));
+                            }
+                          }}
+                        />
+                        <span>{t.name}</span>
+                      </label>
+                    ))}
+                  </div>
+                )}
+                <h5 className="sect" style={{ margin: 'var(--sp3) 0 var(--sp2)' }}>
+                  條件 2（選填）· 且此圖片同時符合（AND 聯動）
+                </h5>
+                <div className="form">
+                  <div className="frow">
+                    <span className="fl">同時符合</span>
+                    <select
+                      className="field"
+                      style={{ flex: 1, minWidth: 0, maxWidth: 340 }}
+                      value={ruleTargetIdB}
+                      onChange={(e) => setRuleTargetIdB(e.target.value)}
+                      aria-label="條件 2 目標"
+                    >
+                      <option value="">無（只要符合上述目標 A 任一即觸發）</option>
+                      {targets.map((t) => (
+                        <option key={t.id} value={t.id}>
+                          🎯 {t.name}（門檻 {Math.round(t.threshold * 100)}%）
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="frow">
+                    <span className="fl">觸發提示音效</span>
+                    <select
+                      className="field"
+                      style={{ width: 150 }}
+                      value={ruleSoundType}
+                      onChange={(e) => setRuleSoundType(e.target.value as SoundType)}
+                      aria-label="觸發提示音效"
+                    >
+                      <option value="double_ding">🎯 雙音</option>
+                      <option value="chime">🔔 清脆鈴聲</option>
+                      <option value="beep">🚨 電子嗶嗶聲</option>
+                      <option value="siren">⚠️ 急促警報</option>
+                      <option value="coin">🪙 遊戲金幣聲</option>
+                      <option value="fanfare">🎺 勝利號角</option>
+                    </select>
+                  </div>
+                  <div className="frow">
+                    <span className="fl">單獨提示音量</span>
+                    <input
+                      type="range"
+                      min="0"
+                      max="100"
+                      value={Math.round(ruleVolume * 100)}
+                      onChange={(e) => setRuleVolume(Number(e.target.value) / 100)}
+                      style={
+                        {
+                          flex: 1,
+                          minWidth: 120,
+                          maxWidth: 240,
+                          '--p': `${Math.round(ruleVolume * 100)}%`,
+                        } as React.CSSProperties
+                      }
+                      aria-label="單獨提示音量"
+                    />
+                    <span className="val num" style={{ width: 34, textAlign: 'right' }}>
+                      {Math.round(ruleVolume * 100)}%
+                    </span>
+                  </div>
+                  <div className="frow">
+                    <span className="fl">動作觸發冷卻</span>
+                    <input
+                      type="number"
+                      className="field num"
+                      style={{ width: 52 }}
+                      min="1"
+                      max="60"
+                      value={ruleCooldown}
+                      onChange={(e) => setRuleCooldown(Math.max(1, Number(e.target.value)))}
+                      aria-label="動作觸發冷卻時間"
+                    />
+                    <span className="val">秒</span>
+                    <span className="fsub">同一條規則在冷卻期間不會重複點擊</span>
+                  </div>
+                </div>
+                <div
+                  style={{
+                    display: 'flex',
+                    gap: 'var(--sp2)',
+                    justifyContent: 'flex-end',
+                    marginTop: 'var(--sp3)',
+                  }}
+                >
+                  <button type="button" className="btn ghost" onClick={() => setIsEditingRule(false)}>
+                    取消
+                  </button>
+                  <button type="submit" className="btn pri">
+                    <Check />
+                    {editingRuleId ? '儲存修改' : '確認建立'}
+                  </button>
+                </div>
+              </form>
             </div>
           )}
         </div>

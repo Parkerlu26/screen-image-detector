@@ -12,6 +12,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
   openFloatingWindow: () => ipcRenderer.invoke('open-floating-window'),
   closeFloatingWindow: () => ipcRenderer.invoke('close-floating-window'),
   resizeFloatingWindow: (params) => ipcRenderer.invoke('resize-floating-window', params),
+  // 這一顆純粹是外觀，失敗不該讓畫面看到一個 rejected promise（換深淺的時候會呼叫，
+  // 而浮動視窗根本沒有原生標題列）。主程序已經把例外收乾淨，這裡再補一層當保險。
+  setTitleBarOverlay: (options) =>
+    ipcRenderer.invoke('set-title-bar-overlay', options).catch(() => false),
   syncTimersData: (data) => ipcRenderer.send('sync-timers-data', data),
   onTimersDataSynced: (callback) => {
     const listener = (event, data) => callback(data);

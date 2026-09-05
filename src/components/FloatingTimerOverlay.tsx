@@ -2,6 +2,13 @@ import React, { useState, useEffect } from 'react';
 import { CooldownTimer } from '../types';
 import { X, GripVertical, LayoutGrid, LayoutList, Sliders, Type, Image as ImageIcon } from 'lucide-react';
 
+/* 桌面置頂懸浮計時窗。外觀走 components.css 的 fw-* 那一段：
+   它永遠浮在使用者的遊戲畫面上，底下是別人的影像，所以固定深底玻璃，
+   強調色只用 --acc-ondark（main.tsx 的 applyAppearance 也跑在 #floating，
+   吃 --bg/--card/--txt 的話選淺色主題會整塊翻成白底白字）。
+   尺寸數學（圖示大小、字級、名稱列寬、resizeFloatingWindow 的目標值）
+   全部沿用舊版，一個數字都沒動；這一版只換外觀。 */
+
 interface FloatingTimerOverlayProps {
   timers: CooldownTimer[];
   onTriggerTimer: (timerId: string) => void;
@@ -100,59 +107,63 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
         setShowControls(false);
         setShowSettingsMenu(false);
       }}
-      className={`${isNativeWindow ? 'w-full h-full p-1' : 'fixed z-[9999]'} select-none font-sans bg-transparent overflow-hidden`}
+      className={`${isNativeWindow ? 'w-full h-full p-1' : 'fixed z-[9999]'} select-none bg-transparent overflow-hidden`}
       style={!isNativeWindow ? { left: `${position.x}px`, top: `${position.y}px` } : undefined}
     >
       <div
         className="relative transition-opacity duration-150 flex flex-col gap-1 items-center bg-transparent w-full h-full"
         style={{ opacity }}
       >
-        {/* Hover Mini Drag Bar & Controls */}
+        {/* 滑過才浮出來的拖曳條與控制列（原生視窗一律顯示） */}
         <div
           onMouseDown={handleMouseDown}
-          style={{ WebkitAppRegion: 'drag' } as any}
-          className={`flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-slate-950/90 border border-slate-700/80 text-[9px] text-slate-300 shadow-xl cursor-move transition-opacity duration-150 shrink-0 ${
-            showControls || isNativeWindow ? 'opacity-100' : 'opacity-0'
-          }`}
+          style={
+            {
+              WebkitAppRegion: 'drag',
+              opacity: showControls || isNativeWindow ? 1 : 0,
+            } as React.CSSProperties
+          }
+          className="fw-bar"
         >
-          <GripVertical className="w-2.5 h-2.5 text-emerald-400" />
-          <span className="font-bold text-[9px]">懸浮窗</span>
+          <GripVertical />
+          <span>懸浮窗</span>
 
-          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as any}>
-            {/* Layout Toggle */}
+          <div className="flex items-center gap-1" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
+            {/* 橫排／直排 */}
             {onChangeLayout && (
               <button
                 type="button"
+                className="fw-btn"
                 onClick={() => onChangeLayout(layout === 'horizontal' ? 'vertical' : 'horizontal')}
-                className="p-0.5 hover:text-white rounded text-slate-400 cursor-pointer"
+                aria-label={layout === 'horizontal' ? '切換為直排' : '切換為橫排'}
                 title={layout === 'horizontal' ? '切換為直排' : '切換為橫排'}
               >
-                {layout === 'horizontal' ? <LayoutList className="w-2.5 h-2.5" /> : <LayoutGrid className="w-2.5 h-2.5" />}
+                {layout === 'horizontal' ? <LayoutList /> : <LayoutGrid />}
               </button>
             )}
 
-            {/* Quick Settings Dropdown Toggle */}
+            {/* 快速設定 */}
             <button
               type="button"
+              className="fw-btn"
+              aria-pressed={showSettingsMenu}
               onClick={() => setShowSettingsMenu(!showSettingsMenu)}
-              className={`p-0.5 rounded transition-colors cursor-pointer ${
-                showSettingsMenu ? 'bg-emerald-600 text-white' : 'text-slate-400 hover:text-white'
-              }`}
+              aria-label="調整圖示與字體大小、名稱顯示"
               title="調整圖示/字體大小與名稱顯示"
             >
-              <Sliders className="w-2.5 h-2.5" />
+              <Sliders />
             </button>
 
-            {/* Opacity Cycle */}
+            {/* 透明度輪播 */}
             {onChangeOpacity && (
               <button
                 type="button"
+                className="fw-btn"
                 onClick={() => {
                   const ops = [1.0, 0.85, 0.65, 0.4];
                   const next = ops[(ops.indexOf(opacity) + 1) % ops.length];
                   onChangeOpacity(next);
                 }}
-                className="p-0.5 hover:text-white rounded text-[8px] font-mono text-slate-400 cursor-pointer"
                 title="切換透明度"
               >
                 {Math.round(opacity * 100)}%
@@ -161,39 +172,34 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
 
             <button
               type="button"
+              className="fw-btn x"
               onClick={onClose}
-              className="p-0.5 hover:text-rose-400 rounded text-slate-400 cursor-pointer"
+              aria-label="關閉懸浮窗"
               title="關閉懸浮窗"
             >
-              <X className="w-2.5 h-2.5" />
+              <X />
             </button>
           </div>
         </div>
 
-        {/* ── Quick Settings Popup Menu ── */}
+        {/* ── 快速設定小面板 ── */}
         {showSettingsMenu && (
-          <div
-            style={{ WebkitAppRegion: 'no-drag' } as any}
-            className="absolute top-7 z-50 p-2 bg-slate-950/95 border border-slate-700 rounded-xl shadow-2xl space-y-2 text-[10px] text-slate-200 min-w-[170px] backdrop-blur-md animate-in fade-in"
-          >
+          <div className="fw-pop" style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}>
             {/* 1. 圖示大小 */}
             {onChangeIconSize && (
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <ImageIcon className="w-3 h-3 text-cyan-400" />
-                  圖示大小:
+              <div className="r">
+                <span className="k">
+                  <ImageIcon />
+                  圖示大小
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="v">
                   {ICON_SIZES.map((s) => (
                     <button
                       key={s}
                       type="button"
+                      className="fw-sz"
+                      aria-pressed={iconSize === s}
                       onClick={() => onChangeIconSize(s)}
-                      className={`px-1.5 py-0.5 rounded font-mono font-bold ${
-                        iconSize === s
-                          ? 'bg-emerald-600 text-white'
-                          : 'bg-slate-800 text-slate-400 hover:text-white'
-                      }`}
                     >
                       {s}
                     </button>
@@ -204,22 +210,19 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
 
             {/* 2. 字體大小 */}
             {onChangeTextSize && (
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-slate-400 flex items-center gap-1">
-                  <Type className="w-3 h-3 text-amber-400" />
-                  字體大小:
+              <div className="r">
+                <span className="k">
+                  <Type />
+                  字體大小
                 </span>
-                <div className="flex items-center gap-1">
+                <div className="v">
                   {TEXT_SIZES.map((ts) => (
                     <button
                       key={ts}
                       type="button"
+                      className="fw-sz"
+                      aria-pressed={textSize === ts}
                       onClick={() => onChangeTextSize(ts)}
-                      className={`px-1.5 py-0.5 rounded font-mono font-bold ${
-                        textSize === ts
-                          ? 'bg-amber-600 text-white'
-                          : 'bg-slate-800 text-slate-400 hover:text-white'
-                      }`}
                     >
                       {ts}
                     </button>
@@ -230,35 +233,32 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
 
             {/* 3. 是否顯示名稱 */}
             {onToggleShowName && (
-              <div className="flex items-center justify-between gap-2 pt-1 border-t border-slate-800">
-                <span className="text-slate-400">顯示計時名稱:</span>
-                <button
-                  type="button"
-                  onClick={() => onToggleShowName(!showName)}
-                  className={`px-2 py-0.5 rounded font-bold transition-colors ${
-                    showName
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-slate-800 text-slate-400'
-                  }`}
-                >
-                  {showName ? '開啟' : '隱藏'}
-                </button>
+              <div className="r">
+                <span className="k">顯示計時名稱</span>
+                <div className="v">
+                  <button
+                    type="button"
+                    className="fw-sz"
+                    aria-pressed={showName}
+                    onClick={() => onToggleShowName(!showName)}
+                  >
+                    {showName ? '開啟' : '隱藏'}
+                  </button>
+                </div>
               </div>
             )}
           </div>
         )}
 
-        {/* ── Timers Layout: 上方秒數 ＋ 中間鮮明全彩圖示 ＋ 下方名稱 ── */}
+        {/* ── 計時磚：上方秒數 ＋ 中間全彩圖示 ＋ 下方名稱 ── */}
         <div
           className={`flex gap-3 items-center justify-center bg-transparent ${
             layout === 'vertical' ? 'flex-col' : 'flex-row flex-wrap'
           }`}
-          style={{ WebkitAppRegion: 'drag' } as any}
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
           {enabledTimers.length === 0 ? (
-            <div className="text-[10px] text-slate-300 bg-slate-950/90 px-3 py-1.5 rounded-xl border border-slate-700 shadow-xl">
-              尚未建立計時器
-            </div>
+            <div className="fw-empty">尚未建立計時器</div>
           ) : (
             enabledTimers.map((timer) => {
               const percent = Math.max(0, (timer.remainingSeconds / timer.durationSeconds) * 100);
@@ -274,62 +274,46 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
                     e.stopPropagation();
                     onTriggerTimer(timer.id);
                   }}
-                  style={{ WebkitAppRegion: 'no-drag' } as any}
-                  className="flex flex-col items-center gap-0.5 cursor-pointer transition-transform hover:scale-105 active:scale-95 shrink-0"
+                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+                  className="fw-tile"
                   title={`${timer.name} (快捷鍵: ${timer.hotkey}) - 點擊觸發/重設`}
                 >
-                  {/* 1. 上方秒數 (可自訂大小) */}
-                  <div className="text-center flex items-center justify-center" style={{ height: `${textSize + 4}px` }}>
+                  {/* 1. 上方秒數（倒數中）／快捷鍵（待機） */}
+                  <div
+                    className="flex items-center justify-center"
+                    style={{ height: `${textSize + 4}px` }}
+                  >
                     {isCooling ? (
-                      <span
-                        className="font-black font-mono text-emerald-400 drop-shadow-[0_2px_4px_rgba(0,0,0,1)] tracking-tight"
-                        style={{ fontSize: `${textSize}px` }}
-                      >
+                      <span className="fw-num" style={{ fontSize: `${textSize}px` }}>
                         {displaySeconds}s
                       </span>
                     ) : (
-                      <span
-                        className="font-bold font-mono text-amber-300 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] bg-slate-950/90 px-1.5 py-0.2 rounded border border-amber-500/50"
-                        style={{ fontSize: `${Math.max(9, textSize - 2)}px` }}
-                      >
+                      <span className="fw-hk" style={{ fontSize: `${Math.max(9, textSize - 2)}px` }}>
                         {timer.hotkey}
                       </span>
                     )}
                   </div>
 
-                  {/* 2. 中間圖示 (可自訂大小 - 保持鮮明全彩) */}
-                  <div
-                    className="relative rounded-xl bg-slate-950 border-2 border-slate-700/80 overflow-hidden flex items-center justify-center shadow-2xl"
-                    style={{ width: `${iconSize}px`, height: `${iconSize}px` }}
-                  >
+                  {/* 2. 中間圖示（保持鮮明全彩，尺寸由使用者選） */}
+                  <div className="fw-ico" style={{ width: `${iconSize}px`, height: `${iconSize}px` }}>
                     {timer.imageDataUrl ? (
-                      <img
-                        src={timer.imageDataUrl}
-                        alt={timer.name}
-                        className="w-full h-full object-contain p-0.5 opacity-100"
-                      />
+                      <img src={timer.imageDataUrl} alt={timer.name} />
                     ) : (
-                      <div className="w-full h-full bg-slate-900 flex flex-col items-center justify-center font-bold text-amber-300 font-mono text-xs">
-                        <span>{timer.hotkey}</span>
-                      </div>
+                      <span className="fw-num" style={{ fontSize: '12px' }}>
+                        {timer.hotkey}
+                      </span>
                     )}
 
-                    {/* Semi-transparent Dark Cooldown Wipe Mask */}
+                    {/* 冷卻遮罩：從上緣蓋下來，剩越少蓋越短 */}
                     {isCooling && timer.displayMode !== 'original_only' && (
-                      <div
-                        className="absolute inset-0 bg-black/55 transition-all duration-100 pointer-events-none"
-                        style={{ height: `${percent}%` }}
-                      />
+                      <div className="fw-wipe" style={{ height: `${percent}%` }} />
                     )}
                   </div>
 
-                  {/* 3. 下方名稱 (可自訂大小與開關) */}
+                  {/* 3. 下方名稱 */}
                   {showName && (
-                    <div className="text-center px-0.5 mt-0.5" style={{ width: `${Math.max(iconSize + 14, 52)}px` }}>
-                      <span
-                        className="font-bold text-white drop-shadow-[0_1px_3px_rgba(0,0,0,1)] truncate block leading-tight text-center"
-                        style={{ fontSize: `${nameFontSize}px` }}
-                      >
+                    <div style={{ width: `${Math.max(iconSize + 14, 52)}px` }}>
+                      <span className="fw-nm" style={{ fontSize: `${nameFontSize}px` }}>
                         {timer.name}
                       </span>
                     </div>

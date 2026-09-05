@@ -1,3 +1,14 @@
+/**
+ * 單一目標的專屬偵測區域（ROI）視窗。
+ *
+ * 外殼走 components.css 的 .scrim.flush ＋ .modal.sheet（開起來就佔滿整個畫面），
+ * 按「還原視窗」才收成一般的 .modal。畫布區用 .work ＞ .stage：那塊底色是寫死的
+ * #0a0e12，**不吃主題**——上面躺的是使用者擷取到的畫面，不是我們的介面。
+ *
+ * 畫布裡面畫的每一個數字（框線 1.5px、角標 10px、遮罩 0.65、最小 8px、
+ * 存檔門檻 10px、滾輪 1.15／0.87、縮放上下限 0.6～6.0）都是偵測行為的一部分，
+ * 換樣式的時候一個都不能動。
+ */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Target, Rect } from '../types';
 import {
@@ -264,158 +275,175 @@ export const RoiModal: React.FC<RoiModalProps> = ({
   if (!isOpen || !target) return null;
 
   return (
-    <div
-      className={`fixed inset-0 z-50 flex items-center justify-center bg-black/90 backdrop-blur-md transition-all duration-200 ${
-        isFullscreen ? 'p-0' : 'p-3 lg:p-4'
-      }`}
-    >
+    <div className={`scrim${isFullscreen ? ' flush' : ''}`}>
       <div
-        className={`bg-slate-950 border border-slate-700/80 shadow-2xl flex flex-col overflow-hidden transition-all duration-200 ${
-          isFullscreen ? 'w-screen h-screen rounded-none' : 'w-full max-w-6xl rounded-2xl max-h-[92vh]'
-        }`}
+        className={`modal${isFullscreen ? ' sheet' : ''}`}
+        style={{ '--mw': '1152px' } as React.CSSProperties}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="roi-title"
       >
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-3.5 border-b border-slate-800 bg-slate-950/95 z-30 shrink-0">
-          <div className="flex items-center gap-3">
-            <div
-              className="w-10 h-10 rounded-xl flex items-center justify-center text-white border"
-              style={{ backgroundColor: `${target.color}25`, borderColor: target.color }}
-            >
-              <TargetIcon className="w-5 h-5" style={{ color: target.color }} />
-            </div>
-            <div>
-              <h2 className="text-base font-bold text-white flex items-center gap-2">
-                設定「{target.name}」專屬偵測區域 (ROI)
-              </h2>
-              <p className="text-xs text-slate-400">
-                可滾輪放大畫面精確框選目標搜索範圍，大幅提升辨識效率並防止誤判
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setIsFullscreen(!isFullscreen)}
-              className="flex items-center gap-1.5 px-3 py-1.5 bg-slate-900 hover:bg-slate-800 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-xs font-semibold transition-colors"
-            >
-              {isFullscreen ? <Minimize2 className="w-3.5 h-3.5" /> : <Maximize2 className="w-3.5 h-3.5" />}
-              <span>{isFullscreen ? '還原視窗' : '全螢幕放大'}</span>
-            </button>
-            <button
-              onClick={onClose}
-              className="p-1.5 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-            >
-              <X className="w-5 h-5" />
-            </button>
-          </div>
-        </div>
-
-        {/* Content Viewport */}
-        <div
-          onWheel={handleWheel}
-          onContextMenu={(e) => e.preventDefault()}
-          className="flex-1 relative flex items-center justify-center bg-slate-950 overflow-hidden select-none"
-        >
+        <header>
+          {/* 圖示磚吃這個目標自己的顏色：畫布上的框線、角標、資訊藥丸都是同一個色，
+              標題這裡跟著走，才看得出來「現在框的是哪一個目標」。 */}
           <div
-            className="relative flex items-center justify-center transition-transform duration-75 will-change-transform"
+            className="mtile"
             style={{
-              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${canvasZoom})`,
-              transformOrigin: 'center center',
+              background: `${target.color}22`,
+              borderColor: target.color,
+              color: target.color,
             }}
           >
-            <canvas
-              ref={canvasRef}
-              width={sourceWidth || 1280}
-              height={sourceHeight || 720}
-              onPointerDown={handlePointerDown}
-              onPointerMove={handlePointerMove}
-              onPointerUp={handlePointerUp}
-              className="max-w-none shadow-2xl border border-slate-800 touch-none cursor-crosshair"
-              style={{
-                maxHeight: isFullscreen ? 'calc(100vh - 120px)' : 'calc(80vh - 140px)',
-                width: 'auto',
-                height: 'auto',
-              }}
-            />
+            <TargetIcon />
+          </div>
+          <div className="htxt">
+            <div className="ttl">
+              <h3 id="roi-title">設定「{target.name}」專屬偵測區域 (ROI)</h3>
+            </div>
+            <p>可滾輪放大畫面精確框選目標搜索範圍，大幅提升辨識效率並防止誤判</p>
           </div>
 
-          {/* Floating Zoom & Pan toolbar */}
-          <div className="absolute top-4 left-4 z-20 flex items-center gap-1.5 bg-slate-900/90 backdrop-blur-md px-2.5 py-1.5 rounded-xl border border-slate-700/80 shadow-2xl text-xs">
-            <button
-              type="button"
-              onClick={() => setCanvasZoom((z) => Math.max(0.6, Number((z - 0.25).toFixed(2))))}
-              className="p-1 text-slate-300 hover:text-white hover:bg-slate-800 rounded-md"
-              title="縮小畫布"
-            >
-              <ZoomOut className="w-4 h-4" />
+          <div className="hact">
+            <button type="button" className="btn" onClick={() => setIsFullscreen(!isFullscreen)}>
+              {isFullscreen ? <Minimize2 /> : <Maximize2 />}
+              {isFullscreen ? '還原視窗' : '全螢幕放大'}
             </button>
-            <span className="font-mono font-bold text-white px-1">{Math.round(canvasZoom * 100)}%</span>
             <button
               type="button"
-              onClick={() => setCanvasZoom((z) => Math.min(6.0, Number((z + 0.25).toFixed(2))))}
-              className="p-1 text-slate-300 hover:text-white hover:bg-slate-800 rounded-md"
-              title="放大畫布"
+              className="btn ghost ico-only"
+              onClick={onClose}
+              title="關閉"
+              aria-label="關閉"
             >
-              <ZoomIn className="w-4 h-4" />
+              <X />
             </button>
-            <div className="h-4 w-px bg-slate-700 mx-0.5" />
-            <button
-              type="button"
-              onClick={() => {
-                setCanvasZoom(1.0);
-                setPanOffset({ x: 0, y: 0 });
+          </div>
+        </header>
+
+        {/* 畫布工作台。.stage 的底色寫死 #0a0e12（淺色主題也一樣），
+            白底會讓人以為畫面破圖。滾輪縮放與擋右鍵選單掛在這一層。 */}
+        <div className="work">
+          <div className="stage" onWheel={handleWheel} onContextMenu={(e) => e.preventDefault()}>
+            <div
+              style={{
+                position: 'relative',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${canvasZoom})`,
+                transformOrigin: 'center center',
+                transition: 'transform 75ms',
+                willChange: 'transform',
               }}
-              className="px-2 py-1 text-[11px] font-semibold text-slate-300 hover:text-white hover:bg-slate-800 rounded-md flex items-center gap-1"
             >
-              <RotateCcw className="w-3 h-3" />
-              100%
-            </button>
+              <canvas
+                ref={canvasRef}
+                width={sourceWidth || 1280}
+                height={sourceHeight || 720}
+                onPointerDown={handlePointerDown}
+                onPointerMove={handlePointerMove}
+                onPointerUp={handlePointerUp}
+                style={{
+                  maxWidth: 'none',
+                  maxHeight: isFullscreen ? 'calc(100vh - 120px)' : 'calc(80vh - 140px)',
+                  width: 'auto',
+                  height: 'auto',
+                  display: 'block',
+                  touchAction: 'none',
+                  cursor: 'crosshair',
+                  border: '1px solid rgba(255, 255, 255, 0.1)',
+                  boxShadow: '0 30px 70px -20px rgba(0, 0, 0, 0.8)',
+                }}
+              />
+            </div>
+
+            {/* 縮放列浮在別人的影像上，所以用 .glass（深底玻璃＋亮字，不吃主題），
+                跟主畫面的 HUD 同一種材質。.glass.pad0 會把裡面的 .btn 收成 24×24
+                方塊，「100%」那顆帶文字，就地把寬度放回 auto。 */}
+            <div className="stagebar tl">
+              <div className="glass pad0">
+                <button
+                  type="button"
+                  className="btn ghost ico-only"
+                  onClick={() => setCanvasZoom((z) => Math.max(0.6, Number((z - 0.25).toFixed(2))))}
+                  title="縮小畫布"
+                  aria-label="縮小畫布"
+                >
+                  <ZoomOut />
+                </button>
+                <span className="num" style={{ fontWeight: 600, padding: '0 2px' }}>
+                  {Math.round(canvasZoom * 100)}%
+                </span>
+                <button
+                  type="button"
+                  className="btn ghost ico-only"
+                  onClick={() => setCanvasZoom((z) => Math.min(6.0, Number((z + 0.25).toFixed(2))))}
+                  title="放大畫布"
+                  aria-label="放大畫布"
+                >
+                  <ZoomIn />
+                </button>
+                <span className="sep" />
+                <button
+                  type="button"
+                  className="btn ghost"
+                  style={{ width: 'auto', padding: '0 6px' }}
+                  onClick={() => {
+                    setCanvasZoom(1.0);
+                    setPanOffset({ x: 0, y: 0 });
+                  }}
+                  title="回到 100% 並置中"
+                >
+                  <RotateCcw />
+                  100%
+                </button>
+              </div>
+            </div>
           </div>
         </div>
 
-        {/* Footer Actions */}
-        <div className="flex flex-wrap items-center justify-between px-6 py-3.5 border-t border-slate-800 bg-slate-950/95 z-30 gap-3">
-          <div className="flex items-center gap-2">
+        <footer>
+          {/* 左邊是「換一種框法」跟操作說明，右邊才是決定，中間用 marginRight:auto 撐開。 */}
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 'var(--sp2)',
+              marginRight: 'auto',
+              minWidth: 0,
+              flexWrap: 'wrap',
+            }}
+          >
+            {/* 這顆同時是按鈕也是狀態：現在就是全螢幕偵測時用 .btn（浮起、亮字），
+                已經框了區域就退成 .btn ghost（透明、灰字）。 */}
             <button
               type="button"
+              className={`btn${isFullFrame ? '' : ' ghost'}`}
               onClick={() => {
                 setIsFullFrame(true);
                 setRoiRect(null);
               }}
-              className={`flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-medium transition-colors border ${
-                isFullFrame
-                  ? 'bg-slate-700 text-white border-slate-500'
-                  : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
-              }`}
             >
-              <RotateCcw className="w-3.5 h-3.5" />
+              <RotateCcw />
               恢復全螢幕偵測
             </button>
-            <div className="text-xs text-slate-400 flex items-center gap-1 ml-2 font-mono">
-              <Crosshair className="w-4 h-4 text-emerald-400" />
-              <span>拖曳滑鼠自訂區域 • 滑鼠中鍵/右鍵拖曳平移</span>
-            </div>
+            <span
+              className="hint"
+              style={{ margin: 0, display: 'inline-flex', alignItems: 'center', gap: 'var(--sp1)' }}
+            >
+              <Crosshair style={{ width: 13, height: 13, color: 'var(--acc-txt)' }} />
+              拖曳滑鼠自訂區域 • 滑鼠中鍵/右鍵拖曳平移
+            </span>
           </div>
 
-          <div className="flex items-center gap-3">
-            <button
-              type="button"
-              onClick={onClose}
-              className="px-4 py-2 rounded-xl border border-slate-700 text-slate-300 hover:bg-slate-800 transition-colors text-xs font-medium"
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={handleSave}
-              className="px-5 py-2 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white transition-colors text-xs font-bold shadow-lg shadow-emerald-900/30 flex items-center gap-1.5 cursor-pointer"
-            >
-              <Check className="w-4 h-4" />
-              儲存區域設定
-            </button>
-          </div>
-        </div>
+          <button type="button" className="btn" onClick={onClose}>
+            取消
+          </button>
+          <button type="button" className="btn pri" onClick={handleSave}>
+            <Check />
+            儲存區域設定
+          </button>
+        </footer>
       </div>
     </div>
   );

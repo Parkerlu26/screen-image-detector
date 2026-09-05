@@ -1,0 +1,167 @@
+/* 設計代幣：iOS ＋ Linear。數值全部照 scratch/ui-preview.html 的定案版本搬過來，
+   不要在這裡即興改動——預覽那邊有一支瀏覽器驗證台在守這些數字（全文對比、折行、幾何置中）。
+   四項已定案、不做成設定：圓角 Linear、密度 標準、材質 毛玻璃、圖示 emoji。
+   唯一兩個可調的是顏色（四組強調色）與深淺，見 src/utils/appearance.ts。 */
+
+:root {
+  --bg: #08090a;
+  --card: #0e0f11;
+  --card2: #121315;
+  --sunk: #0a0a0b;
+  --up: #16171a;
+  --line: rgba(255, 255, 255, 0.07);
+  --line2: rgba(255, 255, 255, 0.12);
+  --line3: rgba(255, 255, 255, 0.2);
+  --txt: #f7f8f8;
+  --dim: #9ca3ad;
+  --dim2: #7e838c;
+  --ok: #4cb782;
+  --warn: #f2c94c;
+  --bad: #eb5757;
+
+  /* 圓角＝Linear 的 6/8/10/14 */
+  --r1: 6px;
+  --r2: 8px;
+  --r3: 10px;
+  --r4: 14px;
+
+  /* 密度＝標準 */
+  --fs0: 11px;
+  --fs1: 12px;
+  --fs2: 13px;
+  --fs3: 15px;
+  --fs4: 19px;
+  --sp1: 4px;
+  --sp2: 8px;
+  --sp3: 12px;
+  --sp4: 16px;
+  --sp5: 20px;
+  --row: 38px;
+
+  /* 材質＝毛玻璃。面板底色走這三個變數，切材質只要換這裡 */
+  --card-bg: rgba(22, 23, 26, 0.62);
+  --card-blur: 20px;
+  --card-sat: 1.7;
+
+  --font: "Inter", "Segoe UI Variable Text", "Segoe UI", "Microsoft JhengHei",
+    system-ui, -apple-system, sans-serif;
+}
+html.light {
+  --bg: #f4f4f6;
+  --card: #ffffff;
+  --card2: #ffffff;
+  --sunk: #eeeef1;
+  --up: #e7e7ec;
+  --line: rgba(0, 0, 0, 0.09);
+  --line2: rgba(0, 0, 0, 0.14);
+  --line3: rgba(0, 0, 0, 0.22);
+  --txt: #15171a;
+  --dim: #4a4f57;
+  --dim2: #5e646c;
+  --ok: #087045;
+  --warn: #7d5606;
+  --bad: #b02328;
+  --card-bg: rgba(255, 255, 255, 0.7);
+}
+
+/* 強調色四組。每組七個值，缺一不可：
+   --acc      填底（要墊得住白字，四組都量過 ≥4.5:1）
+   --acc-hi   滑過／按下的填底（iOS 是按下去變深，不是變亮）
+   --acc-ink  填底上的字，一律白
+   --acc-txt  「當文字用」的強調色。跟填底不可能是同一個值：
+              同一個色不可能既墊得住白字、又亮到能在近黑上讀。淺色主題要另外壓暗。
+   --acc-ondark 浮在使用者影像上的東西（玻璃藥丸、命中框）永遠是深底，
+              所以固定用「深色那一組」，不跟著淺色主題壓暗。
+   --acc-soft 半透明底、--acc-ring focus 環、--tint1/2 毛玻璃的環境光 */
+html,
+html.acc-emerald {
+  --acc: #047857;
+  --acc-hi: #036048;
+  --acc-ink: #ffffff;
+  --acc-txt: #34d399;
+  --acc-ondark: #34d399;
+  --acc-soft: rgba(16, 185, 129, 0.14);
+  --acc-ring: rgba(52, 211, 153, 0.34);
+  --tint1: rgba(16, 185, 129, 0.16);
+  --tint2: rgba(8, 145, 178, 0.14);
+}
+html.light.acc-emerald,
+html.light:not(.acc-indigo):not(.acc-blue):not(.acc-graphite) {
+  --acc-txt: #046c47;
+}
+html.acc-indigo {
+  --acc: #5e6ad2;
+  --acc-hi: #5561cb;
+  --acc-ink: #ffffff;
+  --acc-txt: #8b95f2;
+  --acc-ondark: #8b95f2;
+  --acc-soft: rgba(94, 106, 210, 0.16);
+  --acc-ring: rgba(139, 149, 242, 0.36);
+  --tint1: rgba(94, 106, 210, 0.18);
+  --tint2: rgba(140, 90, 210, 0.13);
+}
+html.light.acc-indigo {
+  --acc-txt: #4650bd;
+}
+html.acc-blue {
+  --acc: #0b5ed7;
+  --acc-hi: #094fb8;
+  --acc-ink: #ffffff;
+  --acc-txt: #5ca8ff;
+  --acc-ondark: #5ca8ff;
+  --acc-soft: rgba(10, 132, 255, 0.16);
+  --acc-ring: rgba(92, 168, 255, 0.36);
+  --tint1: rgba(10, 132, 255, 0.18);
+  --tint2: rgba(94, 106, 210, 0.12);
+}
+html.light.acc-blue {
+  --acc-txt: #1746c0;
+}
+html.acc-graphite {
+  --acc: #5f656e;
+  --acc-hi: #52575f;
+  --acc-ink: #ffffff;
+  --acc-txt: #a5aab2;
+  --acc-ondark: #a5aab2;
+  --acc-soft: rgba(124, 130, 140, 0.18);
+  --acc-ring: rgba(165, 170, 178, 0.38);
+  --tint1: rgba(255, 255, 255, 0.06);
+  --tint2: rgba(255, 255, 255, 0.04);
+}
+html.light.acc-graphite {
+  --acc-txt: #5b6169;
+}
+html,
+body {
+  height: 100%;
+}
+body {
+  background: var(--bg);
+  color: var(--txt);
+  font-family: var(--font);
+  font-size: var(--fs2);
+  line-height: 1.5;
+  letter-spacing: -0.006em;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+}
+/* 表單元素的 font/color/letter-spacing 由 Tailwind preflight（@layer base）負責 inherit。
+   這裡不要再寫一份沒有 layer 的同名規則：沒 layer 的規則會贏過所有工具類，
+   還沒改版的畫面（進階聯動、各種 modal）掛在 <button>／<select> 上的
+   text-xs、text-white 就會整批失效。 */
+:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--acc-ring);
+}
+@media (prefers-reduced-motion: reduce) {
+  * {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+/* 浮動視窗是透明背景的獨立 BrowserWindow，不能吃 body 的底色 */
+body.floating-mode {
+  background: transparent;
+}
+
+

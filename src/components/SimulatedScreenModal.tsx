@@ -1,5 +1,16 @@
+/**
+ * 內建模擬測試環境。
+ *
+ * 一張 800×480 的畫布，自己畫一套假的遊戲 HUD 與幾個會彈跳的標記，
+ * 讓使用者不用真的開遊戲也能截圖、建目標、試偵測。
+ *
+ * 外殼走 components.css 的元件名（.modal／.btn／.hint），
+ * 但**畫布裡面的顏色一律寫死**：那是「被偵測的畫面」的顏色，
+ * 不是這個軟體的介面顏色，跟著主題翻反而會讓偵測結果不可重現。
+ * 同理，畫布外框也固定深色，才看得出畫布的邊界在哪。
+ */
 import React, { useState, useEffect, useRef } from 'react';
-import { Play, Pause, X, Plus, Sparkles, RefreshCw, Trophy, Bell, ShieldAlert, Coins } from 'lucide-react';
+import { Play, Pause, X, Plus, Sparkles, RefreshCw, Trophy, ShieldAlert, Coins } from 'lucide-react';
 
 interface SimulatedScreenModalProps {
   isOpen: boolean;
@@ -183,110 +194,118 @@ export const SimulatedScreenModal: React.FC<SimulatedScreenModalProps> = ({
   if (!isOpen) return null;
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="bg-slate-900 border border-slate-700 rounded-2xl w-full max-w-5xl shadow-2xl overflow-hidden flex flex-col max-h-[92vh]">
-        {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-slate-800 bg-slate-950">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 border border-indigo-500/30 flex items-center justify-center text-indigo-400">
-              <Sparkles className="w-5 h-5" />
-            </div>
-            <div>
-              <h2 className="text-lg font-bold text-white flex items-center gap-2">
-                內建模擬測試環境 (Simulated Test Screen)
-              </h2>
-              <p className="text-xs text-slate-400">
-                可直接將此模擬畫布設為測試訊號來源，或使用「截圖工具」截取金幣 / BOSS 進行測試
-              </p>
-            </div>
+    <div className="scrim">
+      <div
+        className="modal"
+        style={{ '--mw': '1024px' } as React.CSSProperties}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="sim-title"
+      >
+        <header>
+          <div className="mtile">
+            <Sparkles />
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 rounded-lg text-slate-400 hover:text-white hover:bg-slate-800 transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        </div>
+          <div className="htxt">
+            <div className="ttl">
+              <h3 id="sim-title">內建模擬測試環境 (Simulated Test Screen)</h3>
+            </div>
+            <p>可直接將此模擬畫布設為測試訊號來源，或使用「截圖工具」截取金幣 / BOSS 進行測試</p>
+          </div>
 
-        {/* Content */}
-        <div className="p-6 flex flex-col items-center">
-          <div className="relative max-w-full flex items-center justify-center bg-slate-950 rounded-xl border border-slate-800 overflow-hidden shadow-inner">
+          <div className="hact">
+            <button
+              type="button"
+              className="btn ghost ico-only"
+              onClick={onClose}
+              title="關閉模擬測試環境"
+              aria-label="關閉模擬測試環境"
+            >
+              <X />
+            </button>
+          </div>
+        </header>
+
+        {/* 畫布高度會被 max-h 夾住，格線列不能拉伸，所以 alignContent 要 start */}
+        <div className="body" style={{ alignContent: 'start' }}>
+          {/* 外框固定深色（不吃主題）並且只包住畫布本身：使用者要截的就是這塊，
+              框比畫布寬會讓人以為旁邊的深色也算在來源裡面。 */}
+          <div
+            style={{
+              display: 'grid',
+              placeItems: 'center',
+              justifySelf: 'center',
+              background: '#0a0e12',
+              border: '1px solid var(--line)',
+              borderRadius: 'var(--r3)',
+              overflow: 'hidden',
+            }}
+          >
             <canvas
               ref={canvasRef}
               width={800}
               height={480}
-              className="max-w-full max-h-[52vh] object-contain rounded"
+              style={{ maxWidth: '100%', maxHeight: '52vh', objectFit: 'contain', display: 'block' }}
             />
           </div>
 
-          {/* Generator Controls */}
-          <div className="flex flex-wrap items-center justify-between w-full mt-4 gap-3">
-            <div className="flex flex-wrap items-center gap-2">
-              <span className="text-xs font-medium text-slate-400 mr-1">生成測試物件:</span>
-              <button
-                type="button"
-                onClick={() => addItem('coin', '🪙 金幣 (Coin)', '#F59E0B')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-amber-500/10 hover:bg-amber-500/20 text-amber-300 border border-amber-500/30 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Coins className="w-3.5 h-3.5" />
-                + 金幣
-              </button>
-              <button
-                type="button"
-                onClick={() => addItem('boss', '⚔️ BOSS 出現', '#EF4444')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-300 border border-red-500/30 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Trophy className="w-3.5 h-3.5" />
-                + BOSS 標記
-              </button>
-              <button
-                type="button"
-                onClick={() => addItem('alert', '⚠️ 低血量警告', '#DC2626')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-rose-500/10 hover:bg-rose-500/20 text-rose-300 border border-rose-500/30 rounded-lg text-xs font-medium transition-colors"
-              >
-                <ShieldAlert className="w-3.5 h-3.5" />
-                + 警告標示
-              </button>
-              <button
-                type="button"
-                onClick={() => addItem('badge', '🎯 任務完成', '#10B981')}
-                className="flex items-center gap-1 px-3 py-1.5 bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-300 border border-emerald-500/30 rounded-lg text-xs font-medium transition-colors"
-              >
-                <Plus className="w-3.5 h-3.5" />
-                + 任務標誌
-              </button>
-              <button
-                type="button"
-                onClick={() => setItems([])}
-                className="flex items-center gap-1 px-2.5 py-1.5 bg-slate-800 text-slate-400 hover:text-white rounded-lg text-xs transition-colors"
-              >
-                <RefreshCw className="w-3 h-3" />
-                清空物件
-              </button>
-            </div>
-
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => setIsPlaying(!isPlaying)}
-                className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white transition-colors text-xs font-medium flex items-center gap-1.5 border border-slate-700"
-              >
-                {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                {isPlaying ? '暫停移動' : '繼續移動'}
-              </button>
-              {onUseAsSource && (
-                <button
-                  type="button"
-                  onClick={handleUseSource}
-                  className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white transition-colors text-xs font-bold shadow-lg shadow-indigo-900/30 flex items-center gap-1.5"
-                >
-                  <Sparkles className="w-3.5 h-3.5" />
-                  將此畫布設為即時辨識訊號來源
-                </button>
-              )}
-            </div>
+          {/* 生成器：顏色用 --ok/--warn/--bad 三個語意代幣，深淺主題各有一組合格對比。
+              這一列不要用 .flow：那個類是給規則敘述用的，會把圖示縮成 12px。 */}
+          <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 'var(--sp2)' }}>
+            <span className="hint" style={{ margin: 0 }}>
+              生成測試物件:
+            </span>
+            <button
+              type="button"
+              className="btn"
+              style={{ color: 'var(--warn)' }}
+              onClick={() => addItem('coin', '🪙 金幣 (Coin)', '#F59E0B')}
+            >
+              <Coins />+ 金幣
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{ color: 'var(--bad)' }}
+              onClick={() => addItem('boss', '⚔️ BOSS 出現', '#EF4444')}
+            >
+              <Trophy />+ BOSS 標記
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{ color: 'var(--bad)' }}
+              onClick={() => addItem('alert', '⚠️ 低血量警告', '#DC2626')}
+            >
+              <ShieldAlert />+ 警告標示
+            </button>
+            <button
+              type="button"
+              className="btn"
+              style={{ color: 'var(--ok)' }}
+              onClick={() => addItem('badge', '🎯 任務完成', '#10B981')}
+            >
+              <Plus />+ 任務標誌
+            </button>
+            <button type="button" className="btn ghost" onClick={() => setItems([])}>
+              <RefreshCw />
+              清空物件
+            </button>
           </div>
         </div>
+
+        <footer>
+          <button type="button" className="btn" onClick={() => setIsPlaying(!isPlaying)}>
+            {isPlaying ? <Pause /> : <Play />}
+            {isPlaying ? '暫停移動' : '繼續移動'}
+          </button>
+          {onUseAsSource && (
+            <button type="button" className="btn pri" onClick={handleUseSource}>
+              <Sparkles />
+              將此畫布設為即時辨識訊號來源
+            </button>
+          )}
+        </footer>
       </div>
     </div>
   );
