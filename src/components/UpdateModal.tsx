@@ -45,9 +45,6 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
   const [progress, setProgress] = useState<{ received: number; total: number } | null>(null);
   const [error, setError] = useState('');
   const [restarting, setRestarting] = useState(false);
-  // 要重開了，但檔名還沒換好——換檔交給了外面那支更新程式。這種時候不能承諾
-  // 「啟動新版」，因為它還可能換不成而把原本的版本重新啟動。
-  const [swapPending, setSwapPending] = useState(false);
   // 「換好了，但要你自己重開」。這不是錯誤，所以跟 error 分開，用不同顏色講。
   const [handoff, setHandoff] = useState('');
   const isDownloading = progress !== null && !restarting;
@@ -71,7 +68,6 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
     setHandoff('');
     setProgress(null);
     setRestarting(false);
-    setSwapPending(false);
     try {
       setInfo(await api.checkForUpdate());
     } finally {
@@ -110,13 +106,13 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
       if (result.ok && result.restarting === true) {
         // main process 會在幾百毫秒後關掉程式，這裡只要讓畫面說清楚就好。
         setRestarting(true);
-        setSwapPending(result.swapped === false);
         return;
       }
       setProgress(null);
       if (result.ok) {
-        // 檔案已經換好了，只是沒辦法自動重開——這是成功，不要用紅字嚇他。
-        setHandoff(result.message || '新版已經換好了，請關掉這個程式再打開一次。');
+        // 檔案已經驗證過、就在那裡，只是沒辦法自動幫他開起來——這是成功，
+        // 不要用紅字嚇他。訊息裡會有完整路徑，所以這裡的預設字串只是保險。
+        setHandoff(result.message || '新版已經下載好了，請關掉這個程式，再打開那個新檔案。');
         return;
       }
       // 自己按取消的不算錯誤，不用再嚇他一次。
@@ -306,10 +302,11 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
                 <i style={{ width: `${percent ?? 0}%` }} />
               </div>
               <p className="hint" style={{ margin: 0 }}>
+                {/* restarting 只在主程序收到新版親手寫下的「我活起來了」之後才是 true，
+                    所以這句話是可以保證的事實，不是承諾。檔名還沒換回來，那一步要等
+                    這個舊行程結束才做得到，所以刻意不說「已經完成更新」。 */}
                 {restarting
-                  ? swapPending
-                    ? '下載完成，即將關閉，接著由更新程式把新版換上去並開啟…'
-                    : '下載完成，即將關閉並啟動新版本…'
+                  ? '新版已經開起來了，正在關掉這個舊視窗——剩下的檔名整理由新版自己完成。'
                   : `正在下載 ${formatSize(progress.received)}${
                       progress.total ? ` / ${formatSize(progress.total)}` : ''
                     }${percent !== null ? `（${percent}%）` : ''}`}
@@ -321,7 +318,10 @@ export const UpdateModal: React.FC<UpdateModalProps> = ({ isOpen, onClose, prese
             <div className="banner ok">
               <CheckCircle2 />
               <p>
-                <b>更新已經完成</b>
+                {/* 綠色是對的：檔案已經下載完、大小和雜湊都驗過了，這是成功。
+                    但標題不能寫「更新已經完成」——還差使用者自己開一次，
+                    而那一步沒做，檔名和舊檔就都還在原地。 */}
+                <b>新版已經準備好了，還差最後一步</b>
                 <br />
                 {handoff}
               </p>

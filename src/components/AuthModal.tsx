@@ -176,7 +176,6 @@ export const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onLoginSuccess, no
           </div>
           <div className="htxt">
             <h3 id="auth-title">六月幫你顧</h3>
-            <p className="tagline">視窗螢幕即時圖像偵測與自動提醒系統</p>
             <p className="cloud">
               <Cloud />
               帳號為雲端帳號，同一組帳密可在多台電腦登入

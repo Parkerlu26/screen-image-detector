@@ -1780,10 +1780,6 @@ input[type="radio"]:disabled {
 .modal > header.hero p {
   margin: 0;
 }
-.modal > header.hero .tagline {
-  font-size: var(--fs1);
-  color: var(--dim);
-}
 .modal > header.hero .cloud {
   display: flex;
   align-items: center;

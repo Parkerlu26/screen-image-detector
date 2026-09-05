@@ -5,7 +5,14 @@ const path = require('path');
 const APP_ICON = path.join(__dirname, '..', 'assets', 'icon.ico');
 const fs = require('fs');
 const { spawn } = require('child_process');
-const { registerUpdateHandlers, cleanupLeftovers, confirmBootForSwap } = require('./updater.cjs');
+const {
+  registerUpdateHandlers,
+  cleanupLeftovers,
+  confirmBootForSwap,
+  takeOverIfPending,
+  finishTakeover,
+  sleepSync,
+} = require('./updater.cjs');
 
 let mainWindow = null;
 let floatingWindow = null;
@@ -662,13 +669,35 @@ function createWindow() {
   });
 }
 
+// 更新來的那一次啟動，第一件事是接手：回報「我真的活起來了」，然後等舊版結束。
+//
+// 這一行必須在下面那把鎖之前，而且必須是同步的。此刻鎖還在舊版手上：先去搶就一定
+// 會輸，而輸掉的那一方的標準反應是 app.quit()——於是接手永遠不會發生，畫面上會是
+// 「視窗自己關掉、什麼都沒發生」，正是這次要修掉的症狀。
+// 不是更新來的（也就是絕大多數的啟動）時它立刻回傳 null，什麼事都不會做。
+const pendingTakeover = takeOverIfPending();
+
 // 免安裝版很容易被連點兩下開成兩份。單一實例鎖在這個程式裡不只是禮貌問題，而是
 // 正確性前提：
 //   1. 更新流程會在啟動時清掉 <exe>.new / .part / .old。第二個實例一開，就會把
 //      第一個正在下載的 90 MB 檔案刪掉。
 //   2. 全域熱鍵只有先註冊到的那一份收得到，兩份互搶會讓熱鍵時好時壞。
 //   3. 兩份同時驅動 PowerShell 移動滑鼠，等於兩個人搶同一支游標。
-const hasInstanceLock = app.requestSingleInstanceLock();
+//
+// 接手那一次要多試幾輪：舊版的 pid 已經消失了，但作業系統把它那個單一實例用的
+// 隱藏視窗拆掉不見得就在同一個瞬間。搶不到就退場是對的（那表示真的有另一份在跑），
+// 只是別把「差幾百毫秒」也算成那種情況——交接紙條留在原地，下次啟動會再試一次。
+function acquireInstanceLock(takingOver) {
+  if (app.requestSingleInstanceLock()) return true;
+  if (!takingOver) return false;
+  for (let i = 0; i < 4; i++) {
+    sleepSync(300);
+    if (app.requestSingleInstanceLock()) return true;
+  }
+  return false;
+}
+
+const hasInstanceLock = acquireInstanceLock(Boolean(pendingTakeover));
 if (!hasInstanceLock) {
   app.quit();
 }
@@ -690,6 +719,13 @@ app.whenReady().then(() => {
   // 上一輪沒清完的更新暫存檔（下載被中斷的 .part、沒換成功的 .new、換檔留下的
   // .old）。放到這裡是因為有上面那把鎖，才能確定沒有另一份正在寫它們。
   cleanupLeftovers();
+
+  // 接手的下半段：把自己改名頂到使用者平常按的那個檔名上、刪掉舊的執行檔。
+  // 刻意不 await：它最多要花 30 秒（防毒掃那個 190 MB 的檔案時鎖會持續好一陣子），
+  // 而使用者此刻要的是看到視窗。失敗也不擋任何功能，下一次啟動會再試一次。
+  // 沒在接手的時候（pendingTakeover 是 null）它立刻回傳，什麼都不做。
+  void finishTakeover(pendingTakeover);
+
   initPowerShellWorker();
   registerUpdateHandlers(ipcMain);
 
