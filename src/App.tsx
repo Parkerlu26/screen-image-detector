@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Target, TargetGroup, MatchResult, MatchLogEntry, GlobalSettings, AppConfig, UserAccount, ImageComboRule, CooldownTimer, Rect } from './types';
+import { Target, TargetGroup, MatchResult, MatchLogEntry, GlobalSettings, AppConfig, UserAccount, ImageComboRule, CooldownTimer, TimerGroup, Rect } from './types';
 import type { MouseAction } from './electron-api';
 import { Navbar } from './components/Navbar';
 import { TitleBar } from './components/TitleBar';
@@ -47,6 +47,7 @@ import confetti from 'canvas-confetti';
 
 const RULES_STORAGE_KEY = 'screen_detector_combo_rules_v1';
 const TIMERS_STORAGE_KEY = 'screen_detector_cooldown_timers_v1';
+const TIMER_GROUPS_STORAGE_KEY = 'screen_detector_cooldown_timer_groups_v1';
 const FLOATING_WIDGET_KEY = 'screen_detector_floating_widget_v1';
 const FLOATING_OPACITY_KEY = 'screen_detector_floating_opacity_v1';
 const FLOATING_LAYOUT_KEY = 'screen_detector_floating_layout_v1';
@@ -95,6 +96,16 @@ export default function App() {
     try {
       const raw = localStorage.getItem(TIMERS_STORAGE_KEY);
       return raw ? JSON.parse(raw) : [];
+    } catch {
+      return [];
+    }
+  });
+
+  const [timerGroups, setTimerGroups] = useState<TimerGroup[]>(() => {
+    try {
+      const raw = localStorage.getItem(TIMER_GROUPS_STORAGE_KEY);
+      const parsed = raw ? JSON.parse(raw) : [];
+      return Array.isArray(parsed) ? parsed : [];
     } catch {
       return [];
     }
@@ -213,6 +224,34 @@ export default function App() {
     } catch {}
   };
 
+  // ── 計時器子目錄 (timer groups) ──
+  // 跟目標的子目錄一模一樣：群組內順序就是 `timers` 陣列順序，所以拖曳只改寫
+  // timers 陣列＋被拖那顆的 groupId，群組本身只存名稱與收合狀態。
+  const handleUpdateTimerGroups = (newGroups: TimerGroup[]) => {
+    setTimerGroups(newGroups);
+    try {
+      localStorage.setItem(TIMER_GROUPS_STORAGE_KEY, JSON.stringify(newGroups));
+      window.electronAPI?.syncTimersData?.({ timerGroups: newGroups });
+    } catch {}
+  };
+
+  const handleAddTimerGroup = () => {
+    const newGroup: TimerGroup = {
+      id: `tgroup_${Date.now()}_${Math.random().toString(36).substr(2, 5)}`,
+      name: `新子目錄 ${timerGroups.length + 1}`,
+      collapsed: false,
+    };
+    handleUpdateTimerGroups([...timerGroups, newGroup]);
+  };
+
+  /** 刪掉群組時，裡面的計時器不刪，改回未分類。 */
+  const handleDeleteTimerGroup = (groupId: string) => {
+    handleUpdateTimerGroups(timerGroups.filter((g) => g.id !== groupId));
+    handleUpdateTimers(
+      timers.map((t) => (t.groupId === groupId ? { ...t, groupId: null } : t))
+    );
+  };
+
   const [floatingIconSize, setFloatingIconSize] = useState<number>(() => {
     try {
       const raw = localStorage.getItem('screen_detector_floating_icon_size_v1');
@@ -303,6 +342,12 @@ export default function App() {
           setTimers(JSON.parse(e.newValue));
         } catch {}
       }
+      if (e.key === TIMER_GROUPS_STORAGE_KEY && e.newValue) {
+        try {
+          const parsed = JSON.parse(e.newValue);
+          if (Array.isArray(parsed)) setTimerGroups(parsed);
+        } catch {}
+      }
     };
     window.addEventListener('storage', handleStorage);
 
@@ -311,6 +356,9 @@ export default function App() {
       removeSyncListener = window.electronAPI.onTimersDataSynced((data) => {
         if (data.timers) {
           setTimers(data.timers);
+        }
+        if (data.timerGroups) {
+          setTimerGroups(data.timerGroups);
         }
       });
     }
@@ -1565,6 +1613,7 @@ export default function App() {
       <div className="w-screen h-screen bg-transparent select-none overflow-hidden">
         <FloatingTimerOverlay
           timers={timers}
+          timerGroups={timerGroups}
           onTriggerTimer={(timerId) => {
             handleUpdateTimers(
               timers.map((t) =>
@@ -1696,6 +1745,10 @@ export default function App() {
           onUpdateRules={handleUpdateRules}
           timers={timers}
           onUpdateTimers={handleUpdateTimers}
+          timerGroups={timerGroups}
+          onUpdateTimerGroups={handleUpdateTimerGroups}
+          onAddTimerGroup={handleAddTimerGroup}
+          onDeleteTimerGroup={handleDeleteTimerGroup}
           isStreamActive={isStreamActive}
           onOpenCropForTimer={(timerId, onDone) => handleOpenCropModal(null, timerId, onDone)}
           masterVolume={settings.masterVolume}
@@ -1719,6 +1772,7 @@ export default function App() {
       {showFloatingWidget && !window.electronAPI?.openFloatingWindow && (
         <FloatingTimerOverlay
           timers={timers}
+          timerGroups={timerGroups}
           onTriggerTimer={(timerId) => {
             handleUpdateTimers(
               timers.map((t) =>

@@ -10,7 +10,7 @@
  * 都不在——用瀏覽器開 `npm run dev` 的時候。呼叫點原本就寫成 `?.`，那些寫法在這份
  * 宣告下照樣成立，而 `if (window.electronAPI?.x)` 也還是能一次收斂到兩者都存在。
  */
-import type { CooldownTimer, Rect } from './types';
+import type { CooldownTimer, TimerGroup, Rect } from './types';
 
 /** 一個可以擷取的畫面來源，由 `get-desktop-sources` 產生。 */
 export interface DesktopSource {
@@ -63,6 +63,7 @@ export interface HotkeyBinding {
  */
 export interface TimersSyncPayload {
   timers?: CooldownTimer[];
+  timerGroups?: TimerGroup[];
   opacity?: number;
   layout?: 'horizontal' | 'vertical';
   iconSize?: number;

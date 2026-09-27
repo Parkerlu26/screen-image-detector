@@ -173,10 +173,29 @@ export interface ActivationCode {
   note?: string | null;
 }
 
+/**
+ * A 子目錄 in the timer list. Mirrors {@link TargetGroup} exactly: membership is
+ * by `CooldownTimer.groupId`, order inside a group follows the `timers` array.
+ */
+export interface TimerGroup {
+  id: string;
+  name: string;
+  color?: string;
+  /** 收合只影響設定頁的清單，不影響懸浮窗（懸浮窗一律顯示所有啟用中的計時器）。 */
+  collapsed?: boolean;
+}
+
 export interface CooldownTimer {
   id: string;
   name: string; // 計時名稱 (例如：魔消)
   enabled?: boolean; // 獨立開關 (true: 啟用 / false: 停用)
+
+  /**
+   * 這個計時器屬於哪個子目錄 (group)。null/undefined = 未分類。
+   * 群組內的順序就是 `timers` 陣列本身的順序，所以拖曳只會改寫陣列＋這個欄位。
+   */
+  groupId?: string | null;
+
   hotkey: string; // 快捷鍵 (例如：W)
   mode: 'loop' | 'stop_on_zero' | 'two_phase'; // 倒數模式 (自動循環 / 倒數後停止 / 雙回合切換)
   durationSeconds: number; // 倒數時間 (秒，例如：80.0)

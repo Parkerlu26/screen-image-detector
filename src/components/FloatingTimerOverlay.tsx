@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { CooldownTimer } from '../types';
+import { CooldownTimer, TimerGroup } from '../types';
 import { X, GripVertical, LayoutGrid, LayoutList, Sliders, Type, Image as ImageIcon } from 'lucide-react';
 
 /* 桌面置頂懸浮計時窗。外觀走 components.css 的 fw-* 那一段：
@@ -11,6 +11,7 @@ import { X, GripVertical, LayoutGrid, LayoutList, Sliders, Type, Image as ImageI
 
 interface FloatingTimerOverlayProps {
   timers: CooldownTimer[];
+  timerGroups?: TimerGroup[];
   onTriggerTimer: (timerId: string) => void;
   onResetTimer: (timerId: string) => void;
   onClose: () => void;
@@ -28,6 +29,7 @@ interface FloatingTimerOverlayProps {
 
 export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
   timers,
+  timerGroups = [],
   onTriggerTimer,
   onResetTimer,
   onClose,
@@ -53,26 +55,43 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
   // Dynamic window resizing based on timer count, icon size, font size, and name toggle
   const enabledTimers = timers.filter((t) => t.enabled !== false);
 
+  /**
+   * 按子目錄把啟用中的計時器分成幾群，群與群之間只用比較大的間距隔開，不印群名。
+   * 順序＝子目錄順序，未分類永遠排最後；空的群不佔位。收合完全不影響懸浮窗。
+   * 沒有任何子目錄時就是一整群，畫出來跟舊版一模一樣。
+   */
+  const validGroupIds = new Set(timerGroups.map((g) => g.id));
+  const groupKeyOf = (t: CooldownTimer): string | null =>
+    t.groupId && validGroupIds.has(t.groupId) ? t.groupId : null;
+  const clusters = [
+    ...timerGroups.map((g) => enabledTimers.filter((t) => groupKeyOf(t) === g.id)),
+    enabledTimers.filter((t) => groupKeyOf(t) === null),
+  ].filter((c) => c.length > 0);
+
+  /** 群間額外間距（px）。橫排加在寬度、直排加在高度，讓視窗剛好容得下那幾道空隙。 */
+  const GROUP_GAP = 22;
+
   useEffect(() => {
     if (!isNativeWindow || !window.electronAPI?.resizeFloatingWindow) return;
 
     const count = Math.max(1, enabledTimers.length);
     const itemWidth = Math.max(iconSize + 16, 54);
     const singleItemHeight = (textSize + 8) + iconSize + (showName ? 18 : 2);
+    const extraGap = Math.max(0, clusters.length - 1) * GROUP_GAP;
 
     let targetW = 200;
     let targetH = 135;
 
     if (layout === 'horizontal') {
-      targetW = Math.max(160, count * itemWidth + 30);
+      targetW = Math.max(160, count * itemWidth + 30 + extraGap);
       targetH = Math.max(90, singleItemHeight + 36);
     } else {
       targetW = Math.max(100, itemWidth + 24);
-      targetH = Math.max(120, count * singleItemHeight + 36);
+      targetH = Math.max(120, count * singleItemHeight + 36 + extraGap);
     }
 
     window.electronAPI.resizeFloatingWindow({ width: targetW, height: targetH });
-  }, [enabledTimers.length, layout, iconSize, textSize, showName, isNativeWindow]);
+  }, [enabledTimers.length, clusters.length, layout, iconSize, textSize, showName, isNativeWindow]);
 
   const handleMouseDown = (e: React.MouseEvent) => {
     if (isNativeWindow) return;
@@ -97,6 +116,65 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
 
   const ICON_SIZES = [36, 46, 58, 72];
   const TEXT_SIZES = [11, 13, 16, 20];
+
+  /** 單一計時磚：上方秒數／快捷鍵 ＋ 中間全彩圖示 ＋ 下方名稱。所有群共用同一份。 */
+  const renderTile = (timer: CooldownTimer) => {
+    const percent = Math.max(0, (timer.remainingSeconds / timer.durationSeconds) * 100);
+    const isCooling = timer.isRunning;
+    const displaySeconds = timer.remainingSeconds.toFixed(1);
+    const nameFontSize = Math.max(9, Math.round(textSize * 0.82));
+
+    return (
+      <div
+        key={timer.id}
+        onClick={(e) => {
+          e.stopPropagation();
+          onTriggerTimer(timer.id);
+        }}
+        style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
+        className="fw-tile"
+        title={`${timer.name} (快捷鍵: ${timer.hotkey}) - 點擊觸發/重設`}
+      >
+        {/* 1. 上方秒數（倒數中）／快捷鍵（待機） */}
+        <div className="flex items-center justify-center" style={{ height: `${textSize + 4}px` }}>
+          {isCooling ? (
+            <span className="fw-num" style={{ fontSize: `${textSize}px` }}>
+              {displaySeconds}s
+            </span>
+          ) : (
+            <span className="fw-hk" style={{ fontSize: `${Math.max(9, textSize - 2)}px` }}>
+              {timer.hotkey}
+            </span>
+          )}
+        </div>
+
+        {/* 2. 中間圖示（保持鮮明全彩，尺寸由使用者選） */}
+        <div className="fw-ico" style={{ width: `${iconSize}px`, height: `${iconSize}px` }}>
+          {timer.imageDataUrl ? (
+            <img src={timer.imageDataUrl} alt={timer.name} />
+          ) : (
+            <span className="fw-num" style={{ fontSize: '12px' }}>
+              {timer.hotkey}
+            </span>
+          )}
+
+          {/* 冷卻遮罩：從上緣蓋下來，剩越少蓋越短 */}
+          {isCooling && timer.displayMode !== 'original_only' && (
+            <div className="fw-wipe" style={{ height: `${percent}%` }} />
+          )}
+        </div>
+
+        {/* 3. 下方名稱 */}
+        {showName && (
+          <div style={{ width: `${Math.max(iconSize + 14, 52)}px` }}>
+            <span className="fw-nm" style={{ fontSize: `${nameFontSize}px` }}>
+              {timer.name}
+            </span>
+          </div>
+        )}
+      </div>
+    );
+  };
 
   return (
     <div
@@ -250,77 +328,31 @@ export const FloatingTimerOverlay: React.FC<FloatingTimerOverlayProps> = ({
           </div>
         )}
 
-        {/* ── 計時磚：上方秒數 ＋ 中間全彩圖示 ＋ 下方名稱 ── */}
+        {/* ── 計時磚：依子目錄分群，群間只用較大間距隔開，不印群名 ── */}
         <div
-          className={`flex gap-3 items-center justify-center bg-transparent ${
+          className={`flex items-center justify-center bg-transparent ${
             layout === 'vertical' ? 'flex-col' : 'flex-row flex-wrap'
           }`}
-          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
+          style={
+            {
+              WebkitAppRegion: 'drag',
+              gap: `${GROUP_GAP}px`,
+            } as React.CSSProperties
+          }
         >
           {enabledTimers.length === 0 ? (
             <div className="fw-empty">尚未建立計時器</div>
           ) : (
-            enabledTimers.map((timer) => {
-              const percent = Math.max(0, (timer.remainingSeconds / timer.durationSeconds) * 100);
-              const isCooling = timer.isRunning;
-              const displaySeconds = timer.remainingSeconds.toFixed(1);
-
-              const nameFontSize = Math.max(9, Math.round(textSize * 0.82));
-
-              return (
-                <div
-                  key={timer.id}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onTriggerTimer(timer.id);
-                  }}
-                  style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
-                  className="fw-tile"
-                  title={`${timer.name} (快捷鍵: ${timer.hotkey}) - 點擊觸發/重設`}
-                >
-                  {/* 1. 上方秒數（倒數中）／快捷鍵（待機） */}
-                  <div
-                    className="flex items-center justify-center"
-                    style={{ height: `${textSize + 4}px` }}
-                  >
-                    {isCooling ? (
-                      <span className="fw-num" style={{ fontSize: `${textSize}px` }}>
-                        {displaySeconds}s
-                      </span>
-                    ) : (
-                      <span className="fw-hk" style={{ fontSize: `${Math.max(9, textSize - 2)}px` }}>
-                        {timer.hotkey}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* 2. 中間圖示（保持鮮明全彩，尺寸由使用者選） */}
-                  <div className="fw-ico" style={{ width: `${iconSize}px`, height: `${iconSize}px` }}>
-                    {timer.imageDataUrl ? (
-                      <img src={timer.imageDataUrl} alt={timer.name} />
-                    ) : (
-                      <span className="fw-num" style={{ fontSize: '12px' }}>
-                        {timer.hotkey}
-                      </span>
-                    )}
-
-                    {/* 冷卻遮罩：從上緣蓋下來，剩越少蓋越短 */}
-                    {isCooling && timer.displayMode !== 'original_only' && (
-                      <div className="fw-wipe" style={{ height: `${percent}%` }} />
-                    )}
-                  </div>
-
-                  {/* 3. 下方名稱 */}
-                  {showName && (
-                    <div style={{ width: `${Math.max(iconSize + 14, 52)}px` }}>
-                      <span className="fw-nm" style={{ fontSize: `${nameFontSize}px` }}>
-                        {timer.name}
-                      </span>
-                    </div>
-                  )}
-                </div>
-              );
-            })
+            clusters.map((cluster, i) => (
+              <div
+                key={i}
+                className={`flex gap-3 items-center justify-center bg-transparent ${
+                  layout === 'vertical' ? 'flex-col' : 'flex-row flex-wrap'
+                }`}
+              >
+                {cluster.map(renderTile)}
+              </div>
+            ))
           )}
         </div>
       </div>

@@ -164,4 +164,39 @@ body.floating-mode {
   background: transparent;
 }
 
+/* 捲軸：走 Linear 的細、半透明、無箭頭、圓角風格，全部吃 --line/--dim 代幣，
+   所以深淺主題與四組強調色都自動跟著換色，不用另外寫。
+   thumb 用 2px 透明外框＋background-clip:padding-box 做出內縮的細滑塊（可視寬約 6px），
+   軌道全透明，滑過才變亮。浮動窗內容自動撐大不會出捲軸，這規則對它無害。 */
+* {
+  scrollbar-width: thin; /* Firefox／Chromium 新版 */
+  scrollbar-color: var(--line3) transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--line3);
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--dim2);
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+/* 浮動窗萬一出捲軸也讓它完全隱形，別破壞透明外觀 */
+body.floating-mode::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
 

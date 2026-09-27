@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Target, ImageComboRule, CooldownTimer, SoundType } from '../types';
+import { Target, ImageComboRule, CooldownTimer, TimerGroup, SoundType } from '../types';
 import { playAlertSound, speakAlert } from '../utils/audio';
 import { normalizeHotkeyName } from '../utils/hotkeys';
 import {
@@ -17,6 +17,9 @@ import {
   Crosshair,
   Camera,
   FolderOpen,
+  Folder,
+  FolderPlus,
+  GripVertical,
   Mic,
   Pencil,
   Check,
@@ -25,12 +28,24 @@ import {
   Target as TargetIcon,
 } from 'lucide-react';
 
+/**
+ * 計時器卡片與子目錄各自的拖曳 MIME。跟 TargetList 一樣要用型別把「拖卡片」與
+ * 「拖群組排序」分開，否則群組列會把卡片的落點吞成一次排序。刻意跟目標那組
+ * （x-june-target / x-june-group）用不同字串，避免兩個清單的把手互相誤收。
+ */
+const TIMER_MIME = 'application/x-june-timer';
+const TIMER_GROUP_MIME = 'application/x-june-timer-group';
+
 interface AutomationAndTimersProps {
   targets: Target[];
   rules: ImageComboRule[];
   onUpdateRules: (rules: ImageComboRule[]) => void;
   timers: CooldownTimer[];
   onUpdateTimers: (timers: CooldownTimer[]) => void;
+  timerGroups: TimerGroup[];
+  onUpdateTimerGroups: (groups: TimerGroup[]) => void;
+  onAddTimerGroup: () => void;
+  onDeleteTimerGroup: (groupId: string) => void;
   isStreamActive: boolean;
   onOpenCropForTimer: (timerId?: string, onDone?: (dataUrl: string) => void) => void;
   masterVolume: number;
@@ -55,6 +70,10 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
   onUpdateRules,
   timers,
   onUpdateTimers,
+  timerGroups,
+  onUpdateTimerGroups,
+  onAddTimerGroup,
+  onDeleteTimerGroup,
   isStreamActive,
   onOpenCropForTimer,
   masterVolume,
@@ -85,6 +104,16 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
   const [tDuration, setTDuration] = useState<number>(80.0);
   const [tDisplayMode, setTDisplayMode] = useState<'default' | 'cooldown' | 'original_only'>('default');
   const [tImageDataUrl, setTImageDataUrl] = useState<string>('');
+  /** 表單裡選的子目錄。空字串＝未分類（存回去會轉成 null）。 */
+  const [tGroupId, setTGroupId] = useState<string>('');
+
+  // ── 子目錄：行內改名 + 拖曳狀態（鏡射 TargetList，只是換成計時器） ──
+  const [editingTGroupId, setEditingTGroupId] = useState<string | null>(null);
+  const [tempTGroupName, setTempTGroupName] = useState<string>('');
+  const [dragTimerId, setDragTimerId] = useState<string | null>(null);
+  const [dragTGroupId, setDragTGroupId] = useState<string | null>(null);
+  const [tDropHint, setTDropHint] = useState<{ id: string; pos: 'before' | 'after' } | null>(null);
+  const [tDropGroupKey, setTDropGroupKey] = useState<string | null>(null);
 
   // Completion Notification (with independent volume)
   const [tSoundOnComplete, setTSoundOnComplete] = useState<boolean>(true);
@@ -178,6 +207,7 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
     setTDuration(80.0);
     setTDisplayMode('default');
     setTImageDataUrl('');
+    setTGroupId('');
     setTSoundOnComplete(true);
     setTSoundType('double_ding');
     setTVolume(0.8);
@@ -200,6 +230,7 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
     setTDuration(timer.durationSeconds);
     setTDisplayMode(timer.displayMode || 'default');
     setTImageDataUrl(timer.imageDataUrl || '');
+    setTGroupId(timer.groupId ?? '');
     setTSoundOnComplete(timer.soundOnComplete ?? true);
     setTSoundType(timer.soundType || 'double_ding');
     setTVolume(timer.volume ?? 0.8);
@@ -229,6 +260,7 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
                 durationSeconds: Math.max(0.1, Number(tDuration)),
                 displayMode: tDisplayMode,
                 imageDataUrl: tImageDataUrl,
+                groupId: tGroupId || null,
                 soundOnComplete: tSoundOnComplete,
                 soundType: tSoundType,
                 volume: tVolume,
@@ -255,6 +287,7 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
         isRunning: false,
         displayMode: tDisplayMode,
         imageDataUrl: tImageDataUrl,
+        groupId: tGroupId || null,
         soundOnComplete: tSoundOnComplete,
         soundType: tSoundType,
         volume: tVolume,
@@ -320,6 +353,144 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
         }
         return t;
       })
+    );
+  };
+
+  // ── 子目錄：分群、拖曳、批次啟停（整段鏡射 TargetList，換成計時器的資料） ──
+  const knownTGroupIds = new Set(timerGroups.map((g) => g.id));
+  /** 計時器實際所屬的群組；groupId 指向已刪除的群組時退回未分類。 */
+  const timerGroupKeyOf = (t: CooldownTimer): string | null =>
+    t.groupId && knownTGroupIds.has(t.groupId) ? t.groupId : null;
+  const timersOf = (key: string | null) => timers.filter((t) => timerGroupKeyOf(t) === key);
+
+  const clearTDrag = () => {
+    setDragTimerId(null);
+    setDragTGroupId(null);
+    setTDropHint(null);
+    setTDropGroupKey(null);
+  };
+
+  /**
+   * 移動被拖的計時卡。`refId` 是落在哪張卡上（null＝落在群組標頭，代表接到那群最後）。
+   * 只改動陣列順序與這張卡的 groupId。
+   */
+  const moveTimer = (
+    dragId: string,
+    destKey: string | null,
+    refId: string | null,
+    pos: 'before' | 'after'
+  ) => {
+    const dragged = timers.find((t) => t.id === dragId);
+    if (!dragged) return;
+    const rest = timers.filter((t) => t.id !== dragId);
+    const moved: CooldownTimer = { ...dragged, groupId: destKey };
+
+    let index = rest.length;
+    if (refId) {
+      const i = rest.findIndex((t) => t.id === refId);
+      if (i >= 0) index = pos === 'before' ? i : i + 1;
+    } else {
+      let last = -1;
+      rest.forEach((t, i) => {
+        if (timerGroupKeyOf(t) === destKey) last = i;
+      });
+      index = last >= 0 ? last + 1 : rest.length;
+    }
+    onUpdateTimers([...rest.slice(0, index), moved, ...rest.slice(index)]);
+  };
+
+  const reorderTimerGroups = (dragId: string, overId: string) => {
+    const from = timerGroups.findIndex((g) => g.id === dragId);
+    const to = timerGroups.findIndex((g) => g.id === overId);
+    if (from < 0 || to < 0 || from === to) return;
+    const next = [...timerGroups];
+    const [moved] = next.splice(from, 1);
+    next.splice(to, 0, moved);
+    onUpdateTimerGroups(next);
+  };
+
+  const tDragTypes = (e: React.DragEvent) => Array.from(e.dataTransfer.types);
+
+  const onTCardDragOver = (e: React.DragEvent, timer: CooldownTimer) => {
+    if (!tDragTypes(e).includes(TIMER_MIME)) return;
+    e.preventDefault();
+    const rect = e.currentTarget.getBoundingClientRect();
+    const pos: 'before' | 'after' = e.clientY - rect.top < rect.height / 2 ? 'before' : 'after';
+    setTDropGroupKey(timerGroupKeyOf(timer));
+    setTDropHint((prev) =>
+      prev && prev.id === timer.id && prev.pos === pos ? prev : { id: timer.id, pos }
+    );
+  };
+
+  const onTCardDrop = (e: React.DragEvent, timer: CooldownTimer) => {
+    if (!tDragTypes(e).includes(TIMER_MIME)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const dragId = e.dataTransfer.getData(TIMER_MIME) || dragTimerId;
+    const pos = tDropHint && tDropHint.id === timer.id ? tDropHint.pos : 'before';
+    clearTDrag();
+    if (!dragId || dragId === timer.id) return;
+    moveTimer(dragId, timerGroupKeyOf(timer), timer.id, pos);
+  };
+
+  const onTGroupDragOver = (e: React.DragEvent, key: string | null) => {
+    const types = tDragTypes(e);
+    if (types.includes(TIMER_MIME) || (types.includes(TIMER_GROUP_MIME) && key)) {
+      e.preventDefault();
+      setTDropHint(null);
+      setTDropGroupKey(key);
+    }
+  };
+
+  const onTGroupDrop = (e: React.DragEvent, key: string | null) => {
+    const types = tDragTypes(e);
+    if (!types.includes(TIMER_MIME) && !types.includes(TIMER_GROUP_MIME)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    if (types.includes(TIMER_MIME)) {
+      const dragId = e.dataTransfer.getData(TIMER_MIME) || dragTimerId;
+      clearTDrag();
+      if (dragId) moveTimer(dragId, key, null, 'after');
+      return;
+    }
+    const gid = e.dataTransfer.getData(TIMER_GROUP_MIME) || dragTGroupId;
+    clearTDrag();
+    if (gid && key) reorderTimerGroups(gid, key);
+  };
+
+  const handleSaveTGroupRename = (group: TimerGroup) => {
+    const trimmed = tempTGroupName.trim();
+    if (trimmed && trimmed !== group.name) {
+      onUpdateTimerGroups(timerGroups.map((g) => (g.id === group.id ? { ...g, name: trimmed } : g)));
+    }
+    setEditingTGroupId(null);
+  };
+
+  const toggleTGroupCollapsed = (group: TimerGroup) => {
+    onUpdateTimerGroups(
+      timerGroups.map((g) => (g.id === group.id ? { ...g, collapsed: !g.collapsed } : g))
+    );
+  };
+
+  /**
+   * 批次啟用／停用一個子目錄裡的所有計時器。停用時跟單顆開關一樣把運行狀態歸零，
+   * 免得停用一顆正在跑的計時器後，重新啟用時還帶著舊的 endsAt。
+   */
+  const handleSetGroupEnabled = (key: string | null, enabled: boolean) => {
+    const ids = new Set(timersOf(key).map((t) => t.id));
+    onUpdateTimers(
+      timers.map((t) =>
+        ids.has(t.id)
+          ? {
+              ...t,
+              enabled,
+              isRunning: false,
+              remainingSeconds: t.durationSeconds,
+              startedAt: undefined,
+              endsAt: undefined,
+            }
+          : t
+      )
     );
   };
 
@@ -429,6 +600,312 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
     }
   };
 
+  const hasTimerGroups = timerGroups.length > 0;
+
+  /** 單張計時卡。有分群時多一個拖曳把手與落點提示線；無分群時把手照樣可用（純排序）。 */
+  const renderTimerCard = (timer: CooldownTimer) => {
+    const isEnabled = timer.enabled !== false;
+    const isRunning = isEnabled && !!timer.isRunning;
+    const percent = isRunning
+      ? Math.max(0, Math.min(100, (timer.remainingSeconds / timer.durationSeconds) * 100))
+      : 0;
+    const isDragging = dragTimerId === timer.id;
+    const hintBefore = tDropHint?.id === timer.id && tDropHint.pos === 'before';
+    const hintAfter = tDropHint?.id === timer.id && tDropHint.pos === 'after';
+
+    return (
+      <div
+        key={timer.id}
+        onDragOver={(e) => onTCardDragOver(e, timer)}
+        onDrop={(e) => onTCardDrop(e, timer)}
+        className={`tcard${isEnabled ? '' : ' off'}`}
+        style={{
+          opacity: isDragging ? 0.4 : undefined,
+          boxShadow: hintBefore
+            ? '0 -2px 0 0 var(--acc-txt)'
+            : hintAfter
+            ? '0 2px 0 0 var(--acc-txt)'
+            : undefined,
+        }}
+      >
+        {isRunning && (
+          <div className="prog" style={{ '--w': `${percent}%` } as React.CSSProperties} />
+        )}
+        <div className="in">
+          <div className="r1">
+            <span
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TIMER_MIME, timer.id);
+                e.dataTransfer.effectAllowed = 'move';
+                setDragTimerId(timer.id);
+              }}
+              onDragEnd={clearTDrag}
+              className="grip"
+              title="拖曳可調整順序，或拖到其他子目錄"
+              style={{ flex: 'none' }}
+            >
+              <GripVertical />
+            </span>
+            <span className="ticon">
+              {timer.imageDataUrl ? (
+                <img
+                  src={timer.imageDataUrl}
+                  alt={timer.name}
+                  style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 1 }}
+                />
+              ) : (
+                <span
+                  className="num"
+                  style={{
+                    fontSize: 10,
+                    lineHeight: 1.15,
+                    padding: '0 2px',
+                    textAlign: 'center',
+                    color: 'var(--warn)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {timer.hotkey}
+                </span>
+              )}
+            </span>
+            <div className="nm">
+              <b title={timer.name}>{timer.name}</b>
+              {!isEnabled && <span className="tag">已停用</span>}
+            </div>
+            <button
+              type="button"
+              className="btn mini ico-only"
+              onClick={() => handleOpenEditTimer(timer)}
+              aria-label="修改計時設定"
+              title="修改計時設定"
+            >
+              <Pencil />
+            </button>
+            <button
+              type="button"
+              className="btn mini ico-only"
+              onClick={() => handleDeleteTimer(timer.id)}
+              aria-label="刪除計時組"
+              title="刪除計時組"
+              style={{ color: 'var(--bad)' }}
+            >
+              <Trash2 />
+            </button>
+            <button
+              type="button"
+              className="sw sm"
+              role="switch"
+              aria-checked={isEnabled}
+              onClick={() => handleToggleTimerEnabled(timer.id)}
+              aria-label={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
+              title={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
+            >
+              <i />
+            </button>
+          </div>
+          <div className={`bigcount${isRunning ? ' run' : ''}`}>
+            {isEnabled ? timer.remainingSeconds.toFixed(1) : '——'}
+            <small> / {timer.durationSeconds}s</small>
+          </div>
+          {timer.hotkey && (
+            <div className="fsub">
+              <span className="hk" style={{ height: 19, padding: '0 5px' }} title="快捷鍵">
+                {timer.hotkey}
+              </span>
+            </div>
+          )}
+          <div className="foot">
+            <button
+              type="button"
+              className="btn mini ico-only"
+              onClick={() => onOpenCropForTimer(timer.id)}
+              aria-label="從當前畫面截圖作為圖示"
+              title="從當前畫面截圖作為圖示"
+            >
+              <Camera />
+            </button>
+            <div style={{ flex: 1 }} />
+            <button
+              type="button"
+              className="btn mini"
+              onClick={() => isEnabled && handleStartTimer(timer.id)}
+              disabled={!isEnabled}
+            >
+              <Play />
+              觸發
+            </button>
+            <button
+              type="button"
+              className="btn mini ico-only"
+              onClick={() => isEnabled && handleResetTimer(timer.id)}
+              disabled={!isEnabled}
+              aria-label="重設計時"
+              title="重設計時"
+            >
+              <RotateCcw />
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
+
+  /** 一個計時子目錄區塊（group 為 null 時是未分類）。收合只影響這裡，不影響懸浮窗。 */
+  const renderTimerSection = (group: TimerGroup | null) => {
+    const key = group ? group.id : null;
+    const items = timersOf(key);
+    const enabledCount = items.filter((t) => t.enabled !== false).length;
+    const collapsed = group ? !!group.collapsed : false;
+    const isRenaming = group && editingTGroupId === group.id;
+    const isDropping = tDropGroupKey === key && (dragTimerId !== null || dragTGroupId !== null);
+
+    return (
+      <div
+        key={group ? group.id : '__ungrouped__'}
+        onDragOver={(e) => onTGroupDragOver(e, key)}
+        onDrop={(e) => onTGroupDrop(e, key)}
+        className="tgroup"
+        style={isDropping ? { borderColor: 'var(--acc)' } : undefined}
+      >
+        <div className="ghead">
+          {group ? (
+            <span
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TIMER_GROUP_MIME, group.id);
+                e.dataTransfer.effectAllowed = 'move';
+                setDragTGroupId(group.id);
+              }}
+              onDragEnd={clearTDrag}
+              className="grip"
+              title="拖曳可調整子目錄順序"
+            >
+              <GripVertical />
+            </span>
+          ) : (
+            <span style={{ width: 14, flex: 'none' }} />
+          )}
+
+          <button
+            type="button"
+            onClick={() => group && toggleTGroupCollapsed(group)}
+            disabled={!group}
+            className="btn mini ico-only"
+            style={{ color: 'var(--warn)' }}
+            aria-expanded={!collapsed}
+            aria-label={collapsed ? '展開子目錄' : '收合子目錄'}
+            title={collapsed ? '展開子目錄' : '收合子目錄'}
+          >
+            {group && collapsed ? <Folder /> : <FolderOpen />}
+          </button>
+
+          <span className="gname">
+            {isRenaming ? (
+              <>
+                <input
+                  type="text"
+                  value={tempTGroupName}
+                  onChange={(e) => setTempTGroupName(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleSaveTGroupRename(group!);
+                    if (e.key === 'Escape') setEditingTGroupId(null);
+                  }}
+                  onBlur={() => handleSaveTGroupRename(group!)}
+                  className="rename"
+                  aria-label="子目錄名稱"
+                  autoFocus
+                />
+                <button
+                  type="button"
+                  onClick={() => handleSaveTGroupRename(group!)}
+                  className="btn mini ico-only"
+                  style={{ color: 'var(--acc-txt)' }}
+                  aria-label="完成改名"
+                  title="完成改名"
+                >
+                  <Check />
+                </button>
+              </>
+            ) : (
+              <b
+                onClick={() => {
+                  if (!group) return;
+                  setEditingTGroupId(group.id);
+                  setTempTGroupName(group.name);
+                }}
+                style={group ? { cursor: 'pointer' } : { color: 'var(--dim)' }}
+                title={group ? '點擊修改子目錄名稱' : '不屬於任何子目錄的計時器'}
+              >
+                {group ? group.name : '未分類'}
+              </b>
+            )}
+            <span className="count" title="啟用數／總數">
+              {enabledCount}/{items.length}
+            </span>
+          </span>
+
+          {/* 批次＝只有「全部啟用／全部停用」兩顆，不做整組觸發、不做群熱鍵 */}
+          <button
+            type="button"
+            onClick={() => handleSetGroupEnabled(key, true)}
+            disabled={items.length === 0}
+            className="btn mini"
+            aria-label="全部啟用"
+            title="這個子目錄裡的計時器全部啟用"
+          >
+            <Check />
+            全部啟用
+          </button>
+          <button
+            type="button"
+            onClick={() => handleSetGroupEnabled(key, false)}
+            disabled={items.length === 0}
+            className="btn mini"
+            aria-label="全部停用"
+            title="這個子目錄裡的計時器全部停用"
+          >
+            <X />
+            全部停用
+          </button>
+
+          {group && (
+            <button
+              type="button"
+              onClick={() => {
+                if (
+                  items.length === 0 ||
+                  window.confirm(
+                    `刪除子目錄「${group.name}」？裡面的 ${items.length} 個計時器會移到未分類，不會被刪除。`
+                  )
+                ) {
+                  onDeleteTimerGroup(group.id);
+                }
+              }}
+              className="btn mini ico-only hoveronly"
+              style={{ color: 'var(--bad)' }}
+              aria-label="刪除子目錄"
+              title="刪除子目錄（計時器會移到未分類）"
+            >
+              <Trash2 />
+            </button>
+          )}
+        </div>
+
+        {!collapsed && (
+          <div className="gbody">
+            {items.length === 0 ? (
+              <div className={`dropzone${isDropping ? ' on' : ''}`}>把計時卡片拖到這裡</div>
+            ) : (
+              <div className="cards">{items.map((t) => renderTimerCard(t))}</div>
+            )}
+          </div>
+        )}
+      </div>
+    );
+  };
+
   return (
     <div className="page" style={{ gridTemplateColumns: 'minmax(0,1fr)' }}>
       {/* 頁首與子分頁：子分頁用的是頂列同一顆分段控制（滑塊左右滑） */}
@@ -500,12 +977,23 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
                 <Clock />
                 計時組
               </h4>
-              <button type="button" className="btn pri" onClick={handleOpenAddTimer}>
-                <Plus />
-                新增計時組設定
-              </button>
+              <div className="bar2">
+                <button
+                  type="button"
+                  className="btn"
+                  onClick={onAddTimerGroup}
+                  title="新增一個子目錄，之後把計時卡片拖進去"
+                >
+                  <FolderPlus />
+                  子目錄
+                </button>
+                <button type="button" className="btn pri" onClick={handleOpenAddTimer}>
+                  <Plus />
+                  新增計時組設定
+                </button>
+              </div>
             </div>
-            {timers.length === 0 ? (
+            {timers.length === 0 && !hasTimerGroups ? (
               <div className="empty">
                 <Clock />
                 <p style={{ color: 'var(--dim)', fontWeight: 600 }}>尚未建立任何技能計時組</p>
@@ -513,127 +1001,13 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
                   點擊上方「新增計時組設定」，配置熱鍵（如 W、F1）、倒數秒數與技能圖示，懸浮窗即可即時顯示！
                 </p>
               </div>
+            ) : hasTimerGroups ? (
+              <>
+                {timerGroups.map((g) => renderTimerSection(g))}
+                {renderTimerSection(null)}
+              </>
             ) : (
-              <div className="cards">
-                {timers.map((timer) => {
-                  const isEnabled = timer.enabled !== false;
-                  const isRunning = isEnabled && !!timer.isRunning;
-                  const percent = isRunning
-                    ? Math.max(0, Math.min(100, (timer.remainingSeconds / timer.durationSeconds) * 100))
-                    : 0;
-
-                  return (
-                    <div key={timer.id} className={`tcard${isEnabled ? '' : ' off'}`}>
-                      {isRunning && (
-                        <div className="prog" style={{ '--w': `${percent}%` } as React.CSSProperties} />
-                      )}
-                      <div className="in">
-                        <div className="r1">
-                          <span className="ticon">
-                            {timer.imageDataUrl ? (
-                              <img
-                                src={timer.imageDataUrl}
-                                alt={timer.name}
-                                style={{ width: '100%', height: '100%', objectFit: 'contain', padding: 1 }}
-                              />
-                            ) : (
-                              <span
-                                className="num"
-                                style={{
-                                  fontSize: 10,
-                                  lineHeight: 1.15,
-                                  padding: '0 2px',
-                                  textAlign: 'center',
-                                  color: 'var(--warn)',
-                                  fontWeight: 600,
-                                }}
-                              >
-                                {timer.hotkey}
-                              </span>
-                            )}
-                          </span>
-                          <div className="nm">
-                            <b title={timer.name}>{timer.name}</b>
-                            {!isEnabled && <span className="tag">已停用</span>}
-                          </div>
-                          <button
-                            type="button"
-                            className="btn mini ico-only"
-                            onClick={() => handleOpenEditTimer(timer)}
-                            aria-label="修改計時設定"
-                            title="修改計時設定"
-                          >
-                            <Pencil />
-                          </button>
-                          <button
-                            type="button"
-                            className="btn mini ico-only"
-                            onClick={() => handleDeleteTimer(timer.id)}
-                            aria-label="刪除計時組"
-                            title="刪除計時組"
-                            style={{ color: 'var(--bad)' }}
-                          >
-                            <Trash2 />
-                          </button>
-                          <button
-                            type="button"
-                            className="sw sm"
-                            role="switch"
-                            aria-checked={isEnabled}
-                            onClick={() => handleToggleTimerEnabled(timer.id)}
-                            aria-label={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
-                            title={isEnabled ? '點擊停用此計時器' : '點擊啟用此計時器'}
-                          >
-                            <i />
-                          </button>
-                        </div>
-                        <div className={`bigcount${isRunning ? ' run' : ''}`}>
-                          {isEnabled ? timer.remainingSeconds.toFixed(1) : '——'}
-                          <small> / {timer.durationSeconds}s</small>
-                        </div>
-                        {timer.hotkey && (
-                          <div className="fsub">
-                            <span className="hk" style={{ height: 19, padding: '0 5px' }} title="快捷鍵">
-                              {timer.hotkey}
-                            </span>
-                          </div>
-                        )}
-                        <div className="foot">
-                          <button
-                            type="button"
-                            className="btn mini ico-only"
-                            onClick={() => onOpenCropForTimer(timer.id)}
-                            aria-label="從當前畫面截圖作為圖示"
-                            title="從當前畫面截圖作為圖示"
-                          >
-                            <Camera />
-                          </button>
-                          <div style={{ flex: 1 }} />
-                          <button
-                            type="button"
-                            className="btn mini"
-                            onClick={() => isEnabled && handleStartTimer(timer.id)}
-                            disabled={!isEnabled}
-                          >
-                            <Play />
-                            觸發
-                          </button>
-                          <button
-                            type="button"
-                            className="btn mini ico-only"
-                            onClick={() => isEnabled && handleResetTimer(timer.id)}
-                            disabled={!isEnabled}
-                            aria-label="重設計時"
-                            title="重設計時"
-                          >
-                            <RotateCcw />
-                          </button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
+              <div className="cards">{timers.map((timer) => renderTimerCard(timer))}</div>
             )}
           </div>
 
@@ -669,6 +1043,24 @@ export const AutomationAndTimers: React.FC<AutomationAndTimersProps> = ({
                       aria-label="計時名稱"
                       required
                     />
+                  </div>
+
+                  <div className="frow">
+                    <span className="fl">子目錄</span>
+                    <select
+                      className="field"
+                      style={{ flex: 1, minWidth: 0, maxWidth: 220 }}
+                      value={tGroupId}
+                      onChange={(e) => setTGroupId(e.target.value)}
+                      aria-label="所屬子目錄"
+                    >
+                      <option value="">未分類</option>
+                      {timerGroups.map((g) => (
+                        <option key={g.id} value={g.id}>
+                          {g.name}
+                        </option>
+                      ))}
+                    </select>
                   </div>
 
                   <div className="frow">
